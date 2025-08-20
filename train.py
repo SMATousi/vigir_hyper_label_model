@@ -8,7 +8,7 @@ import numpy as np
 from data import SytheticValidation
 import os
 from torch.utils.tensorboard import SummaryWriter
-
+from tqdm import tqdm
 
 for i_run in range(10): #train LELA model 10 runs
     device = "cuda:0"
@@ -23,7 +23,7 @@ for i_run in range(10): #train LELA model 10 runs
     criterion = BCEMask()
 
     dataset = DatasetOnlineGen(
-        size=100000, # this is just to trick data loader to work, the dataset is generated on the fly so there is no dataset size
+        size=100, # this is just to trick data loader to work, the dataset is generated on the fly so there is no dataset size
         max_n_lfs=60,
         max_example=2000,
     )
@@ -50,7 +50,7 @@ for i_run in range(10): #train LELA model 10 runs
     min_loss = np.inf
     losses = []
     val_accs = []
-    for _ in range(1000000):  
+    for _ in tqdm(range(1000000)):  
         if n_not_improved > 10**4:
             break
         for i, (index, value, labels) in enumerate(dataloader):
