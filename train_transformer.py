@@ -61,7 +61,7 @@ for i_run in range(10): #train LELA model 10 runs
 
             outputs, _ = net(index, value)
 
-            mask = (value != -1).float()
+            mask = (value != -1).int()
             loss = criterion(outputs, labels.float(), mask)
             loss.backward()
             optimizer.step()
