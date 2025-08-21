@@ -111,9 +111,11 @@ class SequentialMultiArg(nn.Sequential):
 
 class LELATransformer(nn.Module):
     """The model architecture of LELA using Graph Transformers with size control"""
-    def __init__(self, max_seq_len=1000):
+    def __init__(self, max_seq_len=1000, inference_max_seq_len=None):
         super(LELATransformer, self).__init__()
         self.max_seq_len = max_seq_len
+        # If not specified, use a larger limit for inference (or no limit)
+        self.inference_max_seq_len = inference_max_seq_len or max_seq_len * 4
         self.input_embed = nn.Linear(1, 32)
         self.matrix_net = SequentialMultiArg(
             GraphTransformerLayer(32, 32, n_heads=4, max_seq_len=max_seq_len),
@@ -134,12 +136,18 @@ class LELATransformer(nn.Module):
     def forward(self, index, value):
         # Limit sequence length at model level to prevent memory explosion
         seq_len = value.shape[1]
-        if seq_len > self.max_seq_len:
-            # Randomly sample elements to keep sequence manageable
+        
+        if self.training and seq_len > self.max_seq_len:
+            # Randomly sample elements to keep sequence manageable during training
             sample_indices = torch.randperm(seq_len, device=value.device)[:self.max_seq_len]
             sample_indices = sample_indices.sort()[0]  # Keep sorted for consistency
             value = value[:, sample_indices]
             index = index[:, sample_indices, :]
+        elif not self.training and seq_len > self.inference_max_seq_len:
+            # For inference, if sequence is too large, truncate deterministically
+            # This ensures consistent predictions across multiple calls
+            value = value[:, :self.inference_max_seq_len]
+            index = index[:, :self.inference_max_seq_len, :]
         
         embedded_value = self.input_embed(value.float().unsqueeze(2))
         _, elementwise_embed_sparse = self.matrix_net(index, embedded_value)
@@ -150,9 +158,9 @@ class LELATransformer(nn.Module):
 
 class LELATransformerWrapper:
     """Wrapper for the trained LELA Transformer model"""
-    def __init__(self, checkpoint_path, max_seq_len=1000):
+    def __init__(self, checkpoint_path, max_seq_len=1000, inference_max_seq_len=None):
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.net = LELATransformer(max_seq_len=max_seq_len)
+        self.net = LELATransformer(max_seq_len=max_seq_len, inference_max_seq_len=inference_max_seq_len)
         if checkpoint_path is not None:
             self.checkpoint = torch.load(
                 checkpoint_path,
@@ -204,9 +212,9 @@ class LELATransformerWrapper:
 
 class LELASemisupervisedHelper:
     """helper class to perform semisupervised label aggregation"""
-    def __init__(self, checkpoint_path, max_seq_len=1000):
+    def __init__(self, checkpoint_path, max_seq_len=1000, inference_max_seq_len=None):
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.net = LELATransformer(max_seq_len=max_seq_len)
+        self.net = LELATransformer(max_seq_len=max_seq_len, inference_max_seq_len=inference_max_seq_len)
         self.optimizer = optim.Adam(
             self.net.parameters(),
             lr=0.0001,
