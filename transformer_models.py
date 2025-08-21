@@ -57,11 +57,13 @@ class GraphTransformerLayer(nn.Module):
         self.layer_norm1 = nn.LayerNorm(out_features)
         self.layer_norm2 = nn.LayerNorm(out_features)
         
-        # Projection layer to handle input/output dimension mismatch
+        # Projection layers to handle input/output dimension mismatch
         if in_features != out_features:
             self.input_projection = nn.Linear(in_features, out_features)
+            self.output_projection = nn.Linear(out_features, in_features)
         else:
             self.input_projection = nn.Identity()
+            self.output_projection = nn.Identity()
 
     def forward(self, index, value):
         # value shape: (batch, num_elements, in_features)
@@ -97,8 +99,11 @@ class GraphTransformerLayer(nn.Module):
 
         # Add & Norm
         out2 = self.layer_norm2(out1 + ffn_output)
+        
+        # Project back to input dimensions for compatibility
+        output = self.output_projection(out2)
 
-        return index, out2
+        return index, output
 
 class SequentialMultiArg(nn.Sequential):
     """helper class to stack multiple GraphTransformerLayer"""
