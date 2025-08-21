@@ -46,6 +46,7 @@ class GraphTransformerLayer(nn.Module):
 
         self.q_linear = nn.Linear(in_features, out_features)
         self.k_linear = nn.Linear(in_features, out_features)
+        self.v_linear = nn.Linear(in_features, out_features)
         self.attention = nn.MultiheadAttention(out_features, n_heads, batch_first=True)
         self.ffn = nn.Sequential(
             nn.Linear(out_features, out_features),
