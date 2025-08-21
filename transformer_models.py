@@ -69,14 +69,8 @@ class GraphTransformerLayer(nn.Module):
         # value shape: (batch, num_elements, in_features)
         batch_size, seq_len, _ = value.shape
         
-        # Limit sequence length to prevent memory explosion
-        if seq_len > self.max_seq_len:
-            # Randomly sample elements to keep sequence manageable
-            indices = torch.randperm(seq_len)[:self.max_seq_len]
-            indices = indices.sort()[0]  # Keep sorted for consistency
-            value = value[:, indices, :]
-            index = index[:, indices, :]
-            seq_len = self.max_seq_len
+        # Note: Sequence length limiting is now handled at model level
+        # to avoid index remapping issues
         
         # Project input to output dimensions
         value_proj = self.input_projection(value)
@@ -138,6 +132,15 @@ class LELATransformer(nn.Module):
         )
 
     def forward(self, index, value):
+        # Limit sequence length at model level to prevent memory explosion
+        seq_len = value.shape[1]
+        if seq_len > self.max_seq_len:
+            # Randomly sample elements to keep sequence manageable
+            sample_indices = torch.randperm(seq_len, device=value.device)[:self.max_seq_len]
+            sample_indices = sample_indices.sort()[0]  # Keep sorted for consistency
+            value = value[:, sample_indices]
+            index = index[:, sample_indices, :]
+        
         embedded_value = self.input_embed(value.float().unsqueeze(2))
         _, elementwise_embed_sparse = self.matrix_net(index, embedded_value)
         example_embed = sparse_mean(
