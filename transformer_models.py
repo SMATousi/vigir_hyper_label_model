@@ -46,12 +46,11 @@ class GraphTransformerLayer(nn.Module):
 
         self.q_linear = nn.Linear(in_features, out_features)
         self.k_linear = nn.Linear(in_features, out_features)
-        self.v_linear = nn.Linear(in_features, out_features)
-
+        self.attention = nn.MultiHeadAttention(out_features, n_heads, batch_first=True)
         self.ffn = nn.Sequential(
-            nn.Linear(out_features, out_features * 2),
-            nn.LeakyReLU(),
-            nn.Linear(out_features * 2, out_features)
+            nn.Linear(out_features, out_features),
+            nn.ReLU(),
+            nn.Linear(out_features, out_features)
         )
 
         self.layer_norm1 = nn.LayerNorm(out_features)
@@ -116,20 +115,21 @@ class LELATransformer(nn.Module):
         self.max_seq_len = max_seq_len
         # If not specified, use a larger limit for inference (or no limit)
         self.inference_max_seq_len = inference_max_seq_len or max_seq_len * 4
-        self.input_embed = nn.Linear(1, 32)
+        # Using smaller dimensions to reduce model size
+        embedding_dim = 8
+        n_heads = 2
+
+        self.input_embed = nn.Linear(1, embedding_dim)
         self.matrix_net = SequentialMultiArg(
-            GraphTransformerLayer(32, 32, n_heads=4, max_seq_len=max_seq_len),
-            GraphTransformerLayer(32, 32, n_heads=4, max_seq_len=max_seq_len),
+            # Using a single, smaller transformer layer
+            GraphTransformerLayer(embedding_dim, embedding_dim, n_heads=n_heads, max_seq_len=max_seq_len),
         )
-        col_embed_mixed_size = 32
+        col_embed_mixed_size = embedding_dim
         self.classify = nn.Sequential(
-            nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
+            nn.Linear(col_embed_mixed_size, col_embed_mixed_size * 2),
             nn.LeakyReLU(),
-            nn.Dropout(0.1),  # Add dropout for regularization
-            nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
-            nn.LeakyReLU(),
-            nn.Dropout(0.1),  # Add dropout for regularization
-            nn.Linear(col_embed_mixed_size, 1),
+            nn.Dropout(0.1),
+            nn.Linear(col_embed_mixed_size * 2, 1),
             nn.Sigmoid()
         )
 
