@@ -27,7 +27,7 @@ datasets = [
     "spouse", 
     # "chemprot",
     "sms", 
-    'census', 
+    # 'census', 
     'commercial', 
     'youtube',
     "yelp", 
