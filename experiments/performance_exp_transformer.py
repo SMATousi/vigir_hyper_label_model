@@ -18,8 +18,22 @@ lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA m
 
 lela_transformer = LELATransformerWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt")
 
-datasets = ["semeval", "agnews", "trec", "spouse", "chemprot", "sms",  'census', 'commercial', 'youtube',
-            "yelp", 'imdb', 'cdr', 'tennis', 'basketball'] # name of the 14 datasets
+
+datasets = [
+    # "semeval", 
+    # "agnews", 
+    # "trec", 
+    "spouse", 
+    "chemprot",
+    "sms", 
+    'census', 
+    'commercial', 
+    'youtube',
+    "yelp", 
+    'imdb', 
+    'cdr', 
+    'tennis', 
+    'basketball'] # name of the 14 datasets
 
 # dicts to save performance scores and runing times 
 rsts = defaultdict(list)
