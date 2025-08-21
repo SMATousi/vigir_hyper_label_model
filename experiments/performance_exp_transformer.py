@@ -25,7 +25,7 @@ datasets = [
     # "agnews", 
     # "trec", 
     "spouse", 
-    "chemprot",
+    # "chemprot",
     "sms", 
     'census', 
     'commercial', 
