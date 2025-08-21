@@ -16,7 +16,7 @@ from transformer_models import LELATransformerWrapper
 
 lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA model
 
-lela_transformer = LELATransformerWrapper(checkpoint_path="../model_checkpoints/model_transformer_0.pt")
+lela_transformer = LELATransformerWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt")
 
 datasets = ["semeval", "agnews", "trec", "spouse", "chemprot", "sms",  'census', 'commercial', 'youtube',
             "yelp", 'imdb', 'cdr', 'tennis', 'basketball'] # name of the 14 datasets
