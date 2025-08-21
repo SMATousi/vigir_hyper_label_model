@@ -16,7 +16,8 @@ from transformer_models import LELATransformerWrapper
 
 lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA model
 
-lela_transformer = LELATransformerWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt")
+lela_transformer = LELATransformerWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt", 
+max_seq_len=800000, inference_max_seq_len=5000000)
 
 
 datasets = [
