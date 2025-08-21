@@ -12,7 +12,9 @@ from tqdm import tqdm
 
 for i_run in range(10): #train LELA model 10 runs
     device = "cuda:0"
-    net = LELATransformer()
+    # Use sequence length limit to prevent memory explosion
+    max_seq_len = 800  # Adjust based on available GPU memory
+    net = LELATransformer(max_seq_len=max_seq_len)
 
     optimizer = optim.Adam(
         net.parameters(),
@@ -64,6 +66,10 @@ for i_run in range(10): #train LELA model 10 runs
             mask = (value != -1).int()
             loss = criterion(outputs, labels.float(), mask)
             loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+            
             optimizer.step()
             optimizer.zero_grad()
 

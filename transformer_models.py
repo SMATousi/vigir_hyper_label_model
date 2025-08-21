@@ -33,13 +33,14 @@ def sparse_mean(index, value, expand=True):
     return torch.stack(output_batch)
 
 class GraphTransformerLayer(nn.Module):
-    """One Graph Transformer layer using self-attention"""
-    def __init__(self, in_features, out_features, n_heads=4):
+    """One Graph Transformer layer using self-attention with sequence length control"""
+    def __init__(self, in_features, out_features, n_heads=4, max_seq_len=1000):
         super(GraphTransformerLayer, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.n_heads = n_heads
         self.head_dim = out_features // n_heads
+        self.max_seq_len = max_seq_len
 
         assert self.head_dim * n_heads == self.out_features, "out_features must be divisible by n_heads"
 
@@ -55,22 +56,41 @@ class GraphTransformerLayer(nn.Module):
 
         self.layer_norm1 = nn.LayerNorm(out_features)
         self.layer_norm2 = nn.LayerNorm(out_features)
+        
+        # Projection layer to handle input/output dimension mismatch
+        if in_features != out_features:
+            self.input_projection = nn.Linear(in_features, out_features)
+        else:
+            self.input_projection = nn.Identity()
 
     def forward(self, index, value):
         # value shape: (batch, num_elements, in_features)
+        batch_size, seq_len, _ = value.shape
+        
+        # Limit sequence length to prevent memory explosion
+        if seq_len > self.max_seq_len:
+            # Randomly sample elements to keep sequence manageable
+            indices = torch.randperm(seq_len)[:self.max_seq_len]
+            indices = indices.sort()[0]  # Keep sorted for consistency
+            value = value[:, indices, :]
+            index = index[:, indices, :]
+            seq_len = self.max_seq_len
+        
+        # Project input to output dimensions
+        value_proj = self.input_projection(value)
         
         # Self-attention part
-        q = self.q_linear(value).view(value.shape[0], value.shape[1], self.n_heads, self.head_dim).transpose(1, 2)
-        k = self.k_linear(value).view(value.shape[0], value.shape[1], self.n_heads, self.head_dim).transpose(1, 2)
-        v = self.v_linear(value).view(value.shape[0], value.shape[1], self.n_heads, self.head_dim).transpose(1, 2)
+        q = self.q_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.k_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+        v = self.v_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
         attention_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         attention_probs = torch.softmax(attention_scores, dim=-1)
         
-        context = torch.matmul(attention_probs, v).transpose(1, 2).contiguous().view(value.shape[0], value.shape[1], self.out_features)
+        context = torch.matmul(attention_probs, v).transpose(1, 2).contiguous().view(batch_size, seq_len, self.out_features)
 
-        # Add & Norm
-        out1 = self.layer_norm1(value + context) # Using value as residual, assuming in_features==out_features
+        # Add & Norm (using projected input for residual connection)
+        out1 = self.layer_norm1(value_proj + context)
 
         # Feed-forward part
         ffn_output = self.ffn(out1)
@@ -91,20 +111,23 @@ class SequentialMultiArg(nn.Sequential):
         return inputs
 
 class LELATransformer(nn.Module):
-    """The model architecture of LELA using Graph Transformers"""
-    def __init__(self):
+    """The model architecture of LELA using Graph Transformers with size control"""
+    def __init__(self, max_seq_len=1000):
         super(LELATransformer, self).__init__()
+        self.max_seq_len = max_seq_len
         self.input_embed = nn.Linear(1, 32)
         self.matrix_net = SequentialMultiArg(
-            GraphTransformerLayer(32, 32, n_heads=4),
-            GraphTransformerLayer(32, 32, n_heads=4),
+            GraphTransformerLayer(32, 32, n_heads=4, max_seq_len=max_seq_len),
+            GraphTransformerLayer(32, 32, n_heads=4, max_seq_len=max_seq_len),
         )
         col_embed_mixed_size = 32
         self.classify = nn.Sequential(
             nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
             nn.LeakyReLU(),
+            nn.Dropout(0.1),  # Add dropout for regularization
             nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
             nn.LeakyReLU(),
+            nn.Dropout(0.1),  # Add dropout for regularization
             nn.Linear(col_embed_mixed_size, 1),
             nn.Sigmoid()
         )
@@ -119,9 +142,9 @@ class LELATransformer(nn.Module):
 
 class LELATransformerWrapper:
     """Wrapper for the trained LELA Transformer model"""
-    def __init__(self, checkpoint_path):
+    def __init__(self, checkpoint_path, max_seq_len=1000):
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.net = LELATransformer()
+        self.net = LELATransformer(max_seq_len=max_seq_len)
         if checkpoint_path is not None:
             self.checkpoint = torch.load(
                 checkpoint_path,
@@ -173,9 +196,9 @@ class LELATransformerWrapper:
 
 class LELASemisupervisedHelper:
     """helper class to perform semisupervised label aggregation"""
-    def __init__(self, checkpoint_path):
+    def __init__(self, checkpoint_path, max_seq_len=1000):
         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        self.net = LELATransformer()
+        self.net = LELATransformer(max_seq_len=max_seq_len)
         self.optimizer = optim.Adam(
             self.net.parameters(),
             lr=0.0001,
