@@ -146,8 +146,8 @@ class LELATransformer(nn.Module):
         elif not self.training and seq_len > self.inference_max_seq_len:
             # For inference, if sequence is too large, truncate deterministically
             # This ensures consistent predictions across multiple calls
-            value = value[:, :self.inference_max_seq_len]
-            index = index[:, :self.inference_max_seq_len, :]
+            value = value
+            index = index
         
         embedded_value = self.input_embed(value.float().unsqueeze(2))
         _, elementwise_embed_sparse = self.matrix_net(index, embedded_value)
