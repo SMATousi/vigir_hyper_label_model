@@ -24,7 +24,7 @@ for i_run in range(10): #train LELA model 10 runs
 
     dataset = DatasetOnlineGen(
         size=100, # this is just to trick data loader to work, the dataset is generated on the fly so there is no dataset size
-        max_n_lfs=60,
+        max_n_lfs=10,
         max_example=2000,
     )
 
