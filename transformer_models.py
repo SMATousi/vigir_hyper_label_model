@@ -94,19 +94,20 @@ class LELATransformer(nn.Module):
     """The model architecture of LELA using Graph Transformers"""
     def __init__(self):
         super(LELATransformer, self).__init__()
-        embed_dim = 16 # Reduced from 32
-        n_heads = 2 # Reduced from 4
-        self.input_embed = nn.Linear(1, embed_dim)
+        self.input_embed = nn.Linear(1, 32)
         self.matrix_net = SequentialMultiArg(
-            GraphTransformerLayer(embed_dim, embed_dim, n_heads=n_heads),
-        ) # Reduced from 2 layers to 1
-        col_embed_mixed_size = embed_dim
+            GraphTransformerLayer(32, 32, n_heads=4),
+            GraphTransformerLayer(32, 32, n_heads=4),
+        )
+        col_embed_mixed_size = 32
         self.classify = nn.Sequential(
+            nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
+            nn.LeakyReLU(),
             nn.Linear(col_embed_mixed_size, col_embed_mixed_size),
             nn.LeakyReLU(),
             nn.Linear(col_embed_mixed_size, 1),
             nn.Sigmoid()
-        ) # Simplified classifier
+        )
 
     def forward(self, index, value):
         embedded_value = self.input_embed(value.float().unsqueeze(2))
