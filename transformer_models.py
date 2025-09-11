@@ -236,18 +236,18 @@ class LELATransformer(nn.Module):
         # Limit sequence length at model level to prevent memory explosion
         seq_len = value.shape[1]
         
-        if self.training and seq_len > self.max_seq_len:
-            # Randomly sample elements to keep sequence manageable during training
-            sample_indices = torch.randperm(seq_len, device=value.device)[:self.max_seq_len]
-            sample_indices = sample_indices.sort()[0]  # Keep sorted for consistency
-            value = value[:, sample_indices]
-            index = index[:, sample_indices, :]
-        elif not self.training and seq_len > self.inference_max_seq_len:
+        # if self.training and seq_len > self.max_seq_len:
+        #     # Randomly sample elements to keep sequence manageable during training
+        #     sample_indices = torch.randperm(seq_len, device=value.device)[:self.max_seq_len]
+        #     sample_indices = sample_indices.sort()[0]  # Keep sorted for consistency
+        #     value = value[:, sample_indices]
+        #     index = index[:, sample_indices, :]
+        # elif not self.training and seq_len > self.inference_max_seq_len:
             # For inference, if sequence is too large, truncate deterministically
             # This ensures consistent predictions across multiple calls
-            value = value
-            index = index
-        
+        value = value
+        index = index
+    
         embedded_value = self.input_embed(value.float().unsqueeze(2))
         _, elementwise_embed_sparse = self.matrix_net(index, embedded_value)
         example_embed = sparse_mean(

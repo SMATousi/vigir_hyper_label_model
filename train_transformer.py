@@ -63,7 +63,7 @@ for i_run in range(10): #train LELA model 10 runs
             "model_checkpoints/model_transformer_random.pt"
             )
     
-    for _ in tqdm(range(1000000)):  
+    for _ in tqdm(range(1)):  
         if n_not_improved > 10**4:
             break
         for i, (index, value, labels) in enumerate(dataloader):
