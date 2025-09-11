@@ -13,7 +13,7 @@ from tqdm import tqdm
 for i_run in range(10): #train LELA model 10 runs
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
-    max_seq_len = 800  # Adjust based on available GPU memory
+    max_seq_len = 800000  # Adjust based on available GPU memory
     net = LELATransformer(max_seq_len=max_seq_len)
 
     optimizer = optim.Adam(
@@ -26,7 +26,7 @@ for i_run in range(10): #train LELA model 10 runs
 
     dataset = DatasetOnlineGen(
         size=100, # this is just to trick data loader to work, the dataset is generated on the fly so there is no dataset size
-        max_n_lfs=10,
+        max_n_lfs=60,
         max_example=2000,
     )
 
@@ -40,7 +40,7 @@ for i_run in range(10): #train LELA model 10 runs
         dataset,
         batch_size=50,
         shuffle=True,
-        num_workers=1,
+        num_workers=4,
         collate_fn=collate_fn,
         pin_memory=True,
     )

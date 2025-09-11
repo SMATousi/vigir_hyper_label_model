@@ -104,6 +104,7 @@ class Efficient_GraphTransformerLayer(nn.Module):
     """One Graph Transformer layer using self-attention with sequence length control"""
     def __init__(self, in_features, out_features, n_heads=4, max_seq_len=1000):
         super(Efficient_GraphTransformerLayer, self).__init__()
+        print("Using Efficient Graph Transformer Layer")
         self.in_features = in_features
         self.out_features = out_features
         self.n_heads = n_heads
