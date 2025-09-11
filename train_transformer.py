@@ -52,6 +52,17 @@ for i_run in range(10): #train LELA model 10 runs
     min_loss = np.inf
     losses = []
     val_accs = []
+
+    torch.save(
+            {
+                'n_iter': n_iter,
+                'model_state_dict': net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc_avg':np.mean(val_accs),
+            },
+            "model_checkpoints/model_transformer_random.pt"
+            )
+    
     for _ in tqdm(range(1000000)):  
         if n_not_improved > 10**4:
             break
