@@ -40,7 +40,7 @@ for i_run in range(10): #train LELA model 10 runs
         dataset,
         batch_size=50,
         shuffle=True,
-        num_workers=4,
+        num_workers=1,
         collate_fn=collate_fn,
         pin_memory=True,
     )
