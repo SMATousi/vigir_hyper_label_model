@@ -99,6 +99,75 @@ class GraphTransformerLayer(nn.Module):
 
         return index, output
 
+
+class Efficient_GraphTransformerLayer(nn.Module):
+    """One Graph Transformer layer using self-attention with sequence length control"""
+    def __init__(self, in_features, out_features, n_heads=4, max_seq_len=1000):
+        super(Efficient_GraphTransformerLayer, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.n_heads = n_heads
+        self.head_dim = out_features // n_heads
+        self.max_seq_len = max_seq_len
+
+        assert self.head_dim * n_heads == self.out_features, "out_features must be divisible by n_heads"
+
+        self.q_linear = nn.Linear(in_features, out_features)
+        self.k_linear = nn.Linear(in_features, out_features)
+        self.v_linear = nn.Linear(in_features, out_features)
+        self.attention = nn.MultiheadAttention(out_features, n_heads, batch_first=True)
+        self.ffn = nn.Sequential(
+            nn.Linear(out_features, out_features),
+            nn.ReLU(),
+            nn.Linear(out_features, out_features)
+        )
+
+        self.layer_norm1 = nn.LayerNorm(out_features)
+        self.layer_norm2 = nn.LayerNorm(out_features)
+        
+        # Projection layers to handle input/output dimension mismatch
+        if in_features != out_features:
+            self.input_projection = nn.Linear(in_features, out_features)
+            self.output_projection = nn.Linear(out_features, in_features)
+        else:
+            self.input_projection = nn.Identity()
+            self.output_projection = nn.Identity()
+
+    def forward(self, index, value):
+        # value: (B, S, in_features), index: (B, S, 2) with index[...,0] = SCC id (row)
+        batch_size, seq_len, _ = value.shape
+
+        # Project input to model dim
+        value_proj = self.input_projection(value)
+
+        # Standard QKV
+        q = self.q_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
+        k = self.k_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
+        v = self.v_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
+
+        # --- SCC-local attention mask ---
+        # group ids per element (data point / SCC id)
+        group_ids = index[:, :, 0]                                   # (B, S)
+        same_group = (group_ids.unsqueeze(2) == group_ids.unsqueeze(1))  # (B, S, S) True if same SCC
+        same_group = same_group.unsqueeze(1)                          # (B, 1, S, S)
+        # ---------------------------------
+
+        # Scaled dot-product attention with mask
+        attention_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)  # (B,H,S,S)
+        # disallow cross-SCC interactions
+        attention_scores = attention_scores.masked_fill(~same_group, float('-inf'))
+
+        attention_probs = torch.softmax(attention_scores, dim=-1)     # (B,H,S,S)
+        context = torch.matmul(attention_probs, v).transpose(1, 2).contiguous().view(batch_size, seq_len, self.out_features)
+
+        # Residual + FFN
+        out1 = self.layer_norm1(value_proj + context)
+        ffn_output = self.ffn(out1)
+        out2 = self.layer_norm2(out1 + ffn_output)
+
+        return index, self.output_projection(out2)
+
+
 class SequentialMultiArg(nn.Sequential):
     """helper class to stack multiple GraphTransformerLayer"""
     def forward(self, *inputs):
@@ -123,7 +192,7 @@ class LELATransformer(nn.Module):
         self.input_embed = nn.Linear(1, embedding_dim)
         self.matrix_net = SequentialMultiArg(
             # Using a single, smaller transformer layer
-            GraphTransformerLayer(embedding_dim, embedding_dim, n_heads=n_heads, max_seq_len=max_seq_len),
+            Efficient_GraphTransformerLayer(embedding_dim, embedding_dim, n_heads=n_heads, max_seq_len=max_seq_len),
         )
         col_embed_mixed_size = embedding_dim
         self.classify = nn.Sequential(
