@@ -10,7 +10,7 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-for i_run in range(10): #train LELA model 10 runs
+for i_run in range(2): #train LELA model 10 runs
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
     max_seq_len = 800000  # Adjust based on available GPU memory
