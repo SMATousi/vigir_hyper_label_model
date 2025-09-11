@@ -13,21 +13,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model import LELAWrapper
 from data import load_dataset_wrench
 from transformer_models import LELATransformerWrapper
+from bag_attention_model import LELATransformerBagWrapper
 
 lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA model
 
-lela_transformer = LELATransformerWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt", 
-max_seq_len=800000, inference_max_seq_len=5000000)
+lela_transformer = LELATransformerBagWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt", 
+max_lf_id=0, use_lf_reliability=False)
 
 
 datasets = [
-    # "semeval", 
-    # "agnews", 
-    # "trec", 
+    "semeval", 
+    "agnews", 
+    "trec", 
     "spouse", 
-    # "chemprot",
+    "chemprot",
     "sms", 
-    # 'census', 
+    'census', 
     'commercial', 
     'youtube',
     "yelp", 
@@ -56,8 +57,8 @@ for i in range(len(datasets)):
     for method in [lela_transformer]:
         t_s = time.time()
 
-        if isinstance(method, LELATransformerWrapper):
-            method_name = "LELA-Transformer"
+        if isinstance(method, LELATransformerBagWrapper):
+            method_name = "LELA-Transformer-Bag"
             pred_round = method.predict(X)
         else:
             method_name = method.__name__
