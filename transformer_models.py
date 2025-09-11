@@ -135,31 +135,58 @@ class Efficient_GraphTransformerLayer(nn.Module):
             self.output_projection = nn.Identity()
 
     def forward(self, index, value):
-        # value: (B, S, in_features), index: (B, S, 2) with index[...,0] = SCC id (row)
-        batch_size, seq_len, _ = value.shape
-
-        # Project input to model dim
+        # value: (B, S, in_features)  index[...,0] = SCC id
+        B, S, _ = value.shape
         value_proj = self.input_projection(value)
 
-        # Standard QKV
-        q = self.q_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
-        k = self.k_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
-        v = self.v_linear(value_proj).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)  # (B,H,S,D)
+        # QKV (B, H, S, D)
+        q = self.q_linear(value_proj).view(B, S, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.k_linear(value_proj).view(B, S, self.n_heads, self.head_dim).transpose(1, 2)
+        v = self.v_linear(value_proj).view(B, S, self.n_heads, self.head_dim).transpose(1, 2)
 
-        # --- SCC-local attention mask ---
-        # group ids per element (data point / SCC id)
-        group_ids = index[:, :, 0]                                   # (B, S)
-        same_group = (group_ids.unsqueeze(2) == group_ids.unsqueeze(1))  # (B, S, S) True if same SCC
-        same_group = same_group.unsqueeze(1)                          # (B, 1, S, S)
-        # ---------------------------------
+        out = torch.empty_like(q)  # (B, H, S, D)
+        group_ids = index[:, :, 0]  # (B, S)
 
-        # Scaled dot-product attention with mask
-        attention_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)  # (B,H,S,S)
-        # disallow cross-SCC interactions
-        attention_scores = attention_scores.masked_fill(~same_group, float('-inf'))
+        # Process each batch independently
+        for b in range(B):
+            gids = group_ids[b]                       # (S,)
+            # Stable sort to make segments contiguous: O(S log S) once per layer
+            perm = torch.argsort(gids, stable=True)
+            invperm = torch.empty_like(perm)
+            invperm[perm] = torch.arange(S, device=perm.device)
 
-        attention_probs = torch.softmax(attention_scores, dim=-1)     # (B,H,S,S)
-        context = torch.matmul(attention_probs, v).transpose(1, 2).contiguous().view(batch_size, seq_len, self.out_features)
+            qb = q[b, :, perm, :]                     # (H, S, D)
+            kb = k[b, :, perm, :]
+            vb = v[b, :, perm, :]
+
+            # Run-length encode segment lengths for each SCC
+            gids_sorted = gids[perm]
+            boundaries = torch.where(
+                torch.cat([torch.tensor([True], device=gids.device),
+                        gids_sorted[1:] != gids_sorted[:-1]])
+            )[0]
+            lengths = torch.diff(torch.cat([boundaries, torch.tensor([S], device=gids.device)]))
+
+            # For each SCC block, run SDPA on the sub-sequence (no mask needed)
+            start = 0
+            outb = torch.empty_like(qb)
+            scale = 1.0 / math.sqrt(self.head_dim)
+            for L in lengths.tolist():
+                sl = slice(start, start + L)          # contiguous block for one SCC
+                # shapes to (H, L, D) -> SDPA expects (N, L, E); treat heads as batch
+                qh = qb[:, sl, :]                     # (H, L, D)
+                kh = kb[:, sl, :]
+                vh = vb[:, sl, :]
+                # Use PyTorch 2.x SDPA (Flash/Math kernel) — memory O(H*L*D), no (L×L) mask allocated
+                out_block = F.scaled_dot_product_attention(qh, kh, vh, attn_mask=None, dropout_p=0.0, scale=scale)
+                outb[:, sl, :] = out_block
+                start += L
+
+            # Undo the permutation back to original token order
+            out[b] = outb[:, invperm, :]
+
+        # Merge heads back to (B, S, C)
+        context = out.transpose(1, 2).contiguous().view(B, S, self.out_features)
 
         # Residual + FFN
         out1 = self.layer_norm1(value_proj + context)
