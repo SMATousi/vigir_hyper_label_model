@@ -18,7 +18,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
     max_seq_len = 800000  # Adjust based on available GPU memory
     # net = LELATransformer(max_seq_len=max_seq_len)
     # net = LELATransformerBag()
-    net = StackedLELATransformerBag()
+    net = StackedLELATransformerBag(num_layers=2)
 
     optimizer = optim.Adam(
         net.parameters(),
