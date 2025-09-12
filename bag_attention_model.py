@@ -244,6 +244,59 @@ class LELATransformerBag(nn.Module):
         return preds_padded, token_embeds, aux
 
 
+class StackedLELATransformerBag(nn.Module):
+    def __init__(self, max_lf_id = 0, embedding_dim=16, num_layers=4, use_lf_reliability=False):
+        super().__init__()
+        self.input_embed = nn.Linear(1, embedding_dim)
+        self.layers = nn.ModuleList([
+            BagAttentionLayer(
+                in_features=embedding_dim,
+                out_features=embedding_dim,
+                lf_vocab_size=max_lf_id + 1,
+                use_lf_reliability=use_lf_reliability
+            )
+            for _ in range(num_layers)
+        ])
+        self.classify = nn.Sequential(
+            nn.Linear(embedding_dim, 2 * embedding_dim),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(2 * embedding_dim, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, index, value):
+        x = self.input_embed(value.float().unsqueeze(-1))  # (B,S,D)
+        # pass through each bag-attention block
+        for layer in self.layers:
+            index, x, _ = layer(index, x)
+
+        # pool tokens → example embeddings (like before)
+        example_ids = index[:, :, 0]
+        per_b_example_vecs = []
+        for b in range(index.shape[0]):
+            gids = example_ids[b]
+            perm = torch.argsort(gids, stable=True)
+            tb = x[b, perm, :]
+            gids_sorted = gids[perm]
+            starts = torch.where(torch.cat([torch.tensor([True], device=gids.device),
+                                            gids_sorted[1:] != gids_sorted[:-1]]))[0]
+            ends = torch.cat([starts[1:], torch.tensor([x.shape[1]], device=gids.device)])
+            ex_vecs = [tb[st:en, :].mean(dim=0, keepdim=True) for st, en in zip(starts.tolist(), ends.tolist())]
+            per_b_example_vecs.append(torch.cat(ex_vecs, dim=0))
+
+        per_b_logits = [self.classify(v).squeeze(-1) for v in per_b_example_vecs]
+        E_max = max(v.numel() for v in per_b_logits)
+        preds_padded = x.new_zeros((len(per_b_logits), E_max))
+        example_mask = torch.zeros((len(per_b_logits), E_max), dtype=torch.bool, device=x.device)
+        for b, vec in enumerate(per_b_logits):
+            L = vec.numel()
+            preds_padded[b, :L] = vec
+            example_mask[b, :L] = True
+
+        return preds_padded, x, {"example_mask": example_mask}
+
+
 class LELATransformerBagWrapper:
     """Wrapper for a trained Bag-Attention LELA model (O(NM)).
 

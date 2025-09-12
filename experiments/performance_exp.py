@@ -14,7 +14,7 @@ from model import LELAWrapper
 from data import load_dataset_wrench
 
 
-lela = LELAWrapper(checkpoint_path="./model_checkpoints/model_random.pt") #load pretrained LELA model
+lela = LELAWrapper(checkpoint_path="./model_checkpoints/model_0.pt") #load pretrained LELA model
 
 # datasets = ["semeval", "agnews", "trec", "spouse", "chemprot", "sms",  'census', 'commercial', 'youtube',
 #             "yelp", 'imdb', 'cdr', 'tennis', 'basketball'] # name of the 14 datasets

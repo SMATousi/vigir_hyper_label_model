@@ -17,7 +17,8 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
     # Use sequence length limit to prevent memory explosion
     max_seq_len = 800000  # Adjust based on available GPU memory
     # net = LELATransformer(max_seq_len=max_seq_len)
-    net = LELATransformerBag()
+    # net = LELATransformerBag()
+    net = StackedLELATransformerBag()
 
     optimizer = optim.Adam(
         net.parameters(),
@@ -63,7 +64,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc_avg':np.mean(val_accs),
             },
-            "model_checkpoints/model_transformer_random.pt"
+            "model_checkpoints/stacked_bag_model_transformer_random.pt"
             )
     
     for _ in tqdm(range(100)):  
@@ -130,13 +131,13 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc_avg':np.mean(val_accs),
             },
-            "model_checkpoints/model_transformer_" + str(i_run) + ".pt"
+            "model_checkpoints/stacked_bag_model_transformer_" + str(i_run) + ".pt"
             )
 
 #select the best run
 val_accs = []
 for i in range(NUM_RUNS): 
-    checkpoint = torch.load("model_checkpoints/model_transformer_"+str(i)+".pt", map_location="cpu")
+    checkpoint = torch.load("model_checkpoints/stacked_bag_model_transformer_"+str(i)+".pt", map_location="cpu")
     val_accs.append(checkpoint['val_acc_avg'])
 best_run = np.argmax(val_accs)
-print('Please use the checkpoint:', "model_transformer_" + str(best_run) + ".pt")
+print('Please use the checkpoint:', "stacked_bag_model_transformer_" + str(best_run) + ".pt")
