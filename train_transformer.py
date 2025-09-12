@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from data import DatasetOnlineGen
 from transformer_models import LELATransformer
-from bag_attention_model import LELATransformerBag
+from bag_attention_model import LELATransformerBag, StackedLELATransformerBag
 from loss import  BCEMask
 import numpy as np
 from data import SytheticValidation
