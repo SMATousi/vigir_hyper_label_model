@@ -11,7 +11,7 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-NUM_RUNS = 2
+NUM_RUNS = 10
 for i_run in range(NUM_RUNS): #train LELA model 10 runs
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
@@ -30,7 +30,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
     dataset = DatasetOnlineGen(
         size=100, # this is just to trick data loader to work, the dataset is generated on the fly so there is no dataset size
         max_n_lfs=60,
-        max_example=200,
+        max_example=2000,
     )
 
 
@@ -66,7 +66,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
             "model_checkpoints/model_transformer_random.pt"
             )
     
-    for _ in tqdm(range(10)):  
+    for _ in tqdm(range(100)):  
         if n_not_improved > 10**4:
             break
         for i, (index, value, labels) in enumerate(dataloader):
@@ -84,7 +84,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
                     pad = torch.full((B, E_max - E), -1, dtype=labels.dtype, device=labels.device)
                     labels = torch.cat([labels, pad], dim=1)
 
-                print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
+                # print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
                 mask = aux["example_mask"] & (labels != -1)
                 loss = criterion(outputs, labels.float(), mask)
                 loss.backward()
