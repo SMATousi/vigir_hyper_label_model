@@ -119,7 +119,7 @@ for i_run in range(NUM_RUNS): #train LELA model 10 runs
                         n_not_improved+=eval_fre
                     net.train()
             except Exception as e:
-                # print(e)
+                print(e)
                 continue
         if not os.path.exists("model_checkpoints"): 
             os.mkdir("model_checkpoints")
