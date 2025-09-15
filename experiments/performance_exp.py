@@ -43,12 +43,12 @@ for i in range(len(datasets)):
     rsts['dataset'].append(datasets[i])
     print(datasets[i])
     X, y = load_dataset_wrench("datasets/"+datasets[i]) # load dataset
-    print(y[:10])
+    # print(y[:10])
 
-    mallicious_labeler = (1 - y).reshape(-1, 1)
-    print(X.shape)
-    print(mallicious_labeler.shape)
-    X = np.concatenate([X, mallicious_labeler], axis=1)
+    # mallicious_labeler = (1 - y).reshape(-1, 1)
+    # print(X.shape)
+    # print(mallicious_labeler.shape)
+    # X = np.concatenate([X, mallicious_labeler], axis=1)
     
     # remove cols and rows with all abstentions
     non_zero_cols = np.sum(X >= 0, axis=0) != 0
