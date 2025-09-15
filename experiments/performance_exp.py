@@ -45,7 +45,7 @@ for i in range(len(datasets)):
     X, y = load_dataset_wrench("datasets/"+datasets[i]) # load dataset
     print(y[:10])
 
-    mallicious_labeler = (1 - y).unsqueeze(1)
+    mallicious_labeler = (1 - y).reshape(-1, 1)
     print(X.shape)
     print(mallicious_labeler.shape)
     X = np.concatenate([X, mallicious_labeler], axis=1)
