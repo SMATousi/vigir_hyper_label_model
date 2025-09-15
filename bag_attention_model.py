@@ -319,6 +319,7 @@ class LELATransformerBagWrapper:
 
         # Build the bag-attention model
         self.net = StackedLELATransformerBag(
+            num_layers=2,
             max_lf_id=max_lf_id,
             embedding_dim=embedding_dim,
             use_lf_reliability=use_lf_reliability,
