@@ -22,20 +22,21 @@ max_lf_id=0, use_lf_reliability=False)
 
 
 datasets = [
-    "semeval", 
+    'census', 
+    'imdb', 
+    "yelp", 
+    'youtube',
+    "sms", 
+    "spouse",
+    'cdr', 
+    'commercial', 
+    'tennis', 
+    'basketball',
     "agnews", 
     "trec", 
-    "spouse", 
+    "semeval", 
     "chemprot",
-    "sms", 
-    'census', 
-    'commercial', 
-    'youtube',
-    "yelp", 
-    'imdb', 
-    'cdr', 
-    'tennis', 
-    'basketball'] # name of the 14 datasets
+    ] # name of the 14 datasets
 
 # dicts to save performance scores and runing times 
 rsts = defaultdict(list)
