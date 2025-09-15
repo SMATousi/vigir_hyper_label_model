@@ -20,20 +20,21 @@ lela = LELAWrapper(checkpoint_path="./model_checkpoints/model_0.pt") #load pretr
 #             "yelp", 'imdb', 'cdr', 'tennis', 'basketball'] # name of the 14 datasets
 
 datasets = [
-    # "semeval", 
-    # "agnews", 
-    # "trec", 
-    "spouse", 
-    # "chemprot",
-    "sms", 
-    # 'census', 
-    'commercial', 
-    'youtube',
-    "yelp", 
+    'census', 
     'imdb', 
+    "yelp", 
+    'youtube',
+    "sms", 
+    "spouse",
     'cdr', 
+    'commercial', 
     'tennis', 
-    'basketball'] # name of the 14 datasets
+    'basketball',
+    "agnews", 
+    "trec", 
+    "semeval", 
+    "chemprot",
+    ] # name of the 14 datasets
 
 # dicts to save performance scores and runing times 
 rsts = defaultdict(list)
@@ -42,6 +43,10 @@ for i in range(len(datasets)):
     rsts['dataset'].append(datasets[i])
     print(datasets[i])
     X, y = load_dataset_wrench("datasets/"+datasets[i]) # load dataset
+    print(y[:10])
+
+    mallicious_labeler = 1 - y
+    X = np.concatenate([X, mallicious_labeler], axis=1)
     
     # remove cols and rows with all abstentions
     non_zero_cols = np.sum(X >= 0, axis=0) != 0
