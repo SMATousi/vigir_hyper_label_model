@@ -46,6 +46,8 @@ for i in range(len(datasets)):
     print(y[:10])
 
     mallicious_labeler = 1 - y
+    print(X.shape)
+    print(mallicious_labeler.shape)
     X = np.concatenate([X, mallicious_labeler], axis=1)
     
     # remove cols and rows with all abstentions
