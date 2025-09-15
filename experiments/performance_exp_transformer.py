@@ -17,7 +17,7 @@ from bag_attention_model import LELATransformerBagWrapper
 
 lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA model
 
-lela_transformer = LELATransformerBagWrapper(checkpoint_path="./model_checkpoints/model_transformer_0.pt", 
+lela_transformer = LELATransformerBagWrapper(checkpoint_path="./model_checkpoints/stacked_bag_model_transformer_0.pt", 
 max_lf_id=0, use_lf_reliability=False)
 
 

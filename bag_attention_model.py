@@ -318,7 +318,7 @@ class LELATransformerBagWrapper:
         self.device = device or ('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         # Build the bag-attention model
-        self.net = LELATransformerBag(
+        self.net = StackedLELATransformerBag(
             max_lf_id=max_lf_id,
             embedding_dim=embedding_dim,
             use_lf_reliability=use_lf_reliability,
