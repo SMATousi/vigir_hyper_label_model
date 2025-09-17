@@ -14,8 +14,9 @@ from model import LELAWrapper
 from data import load_dataset_wrench
 
 
-lela = LELAWrapper(checkpoint_path="./model_checkpoints/model_0.pt") #load pretrained LELA model
+lela = LELAWrapper(checkpoint_path="./lela_checkpoint.pt") #load pretrained LELA model
 
+NOISE_POWER = 0.1  # 10% chance of flipping each non-zero label
 # datasets = ["semeval", "agnews", "trec", "spouse", "chemprot", "sms",  'census', 'commercial', 'youtube',
 #             "yelp", 'imdb', 'cdr', 'tennis', 'basketball'] # name of the 14 datasets
 
@@ -49,7 +50,28 @@ for i in range(len(datasets)):
     # print(X.shape)
     # print(mallicious_labeler.shape)
     # X = np.concatenate([X, mallicious_labeler], axis=1)
+    # Apply label flipping noise: flip -1 to 1 and 1 to -1 with probability NOISE_POWER
+    print(f"Applying label flipping noise with probability {NOISE_POWER} to non-zero values")
+    X_noisy = X.copy()
     
+    # Create mask for non-zero values (where X is -1 or 1)
+    non_zero_mask = X != 0
+    
+    # Generate random probabilities for each position
+    flip_probs = np.random.random(X.shape)
+    
+    # Create flip mask: flip where probability < NOISE_POWER and value is non-zero
+    flip_mask = (flip_probs < NOISE_POWER) & non_zero_mask
+    
+    # Flip the labels: -1 becomes 1, 1 becomes -1, 0 stays 0
+    X_noisy[flip_mask] = -X_noisy[flip_mask]
+    
+    # Count flipped labels for reporting
+    num_flipped = np.sum(flip_mask)
+    total_non_zero = np.sum(non_zero_mask)
+    print(f"Flipped {num_flipped} out of {total_non_zero} non-zero labels ({num_flipped/total_non_zero*100:.1f}%)")
+    
+    X = X_noisy
     # remove cols and rows with all abstentions
     non_zero_cols = np.sum(X >= 0, axis=0) != 0
     X = X[:, non_zero_cols]
