@@ -90,7 +90,8 @@ class BagAttentionLayer(nn.Module):
         for b in range(B):
             gids = row_ids[b]                           # (S,)
             # stable sort to make each SCC contiguous
-            perm = torch.argsort(gids, stable=True)
+            # perm = torch.argsort(gids, stable=True)
+            perm = torch.argsort(gids)
             invperm = torch.empty_like(perm); invperm[perm] = torch.arange(S, device=perm.device)
 
             Kb = K[b, perm, :]                          # (S,C)
