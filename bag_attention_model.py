@@ -273,29 +273,81 @@ class StackedLELATransformerBag(nn.Module):
         for layer in self.layers:
             index, x, _ = layer(index, x)
 
-        # pool tokens → example embeddings (like before)
-        example_ids = index[:, :, 0]
-        per_b_example_vecs = []
-        for b in range(index.shape[0]):
-            gids = example_ids[b]
-            # perm = torch.argsort(gids, stable=True)
-            perm = torch.argsort(gids)
-            tb = x[b, perm, :]
-            gids_sorted = gids[perm]
-            starts = torch.where(torch.cat([torch.tensor([True], device=gids.device),
-                                            gids_sorted[1:] != gids_sorted[:-1]]))[0]
-            ends = torch.cat([starts[1:], torch.tensor([x.shape[1]], device=gids.device)])
-            ex_vecs = [tb[st:en, :].mean(dim=0, keepdim=True) for st, en in zip(starts.tolist(), ends.tolist())]
-            per_b_example_vecs.append(torch.cat(ex_vecs, dim=0))
-
-        per_b_logits = [self.classify(v).squeeze(-1) for v in per_b_example_vecs]
-        E_max = max(v.numel() for v in per_b_logits)
-        preds_padded = x.new_zeros((len(per_b_logits), E_max))
-        example_mask = torch.zeros((len(per_b_logits), E_max), dtype=torch.bool, device=x.device)
-        for b, vec in enumerate(per_b_logits):
-            L = vec.numel()
-            preds_padded[b, :L] = vec
-            example_mask[b, :L] = True
+        # Vectorized pooling of tokens → example embeddings
+        B, S, D = x.shape
+        example_ids = index[:, :, 0]  # (B, S)
+        
+        # Create a flattened view for efficient processing
+        # Flatten batch and sequence dimensions
+        x_flat = x.view(B * S, D)  # (B*S, D)
+        example_ids_flat = example_ids.view(B * S)  # (B*S,)
+        
+        # Create batch offsets to make example IDs unique across batches
+        batch_offsets = torch.arange(B, device=x.device).unsqueeze(1) * (example_ids.max() + 1)  # (B, 1)
+        example_ids_global = example_ids + batch_offsets  # (B, S) - unique IDs across batches
+        example_ids_global_flat = example_ids_global.view(B * S)  # (B*S,)
+        
+        # Use scatter_add for efficient pooling
+        unique_ids, inverse_indices = torch.unique(example_ids_global_flat, return_inverse=True)
+        num_examples = len(unique_ids)
+        
+        # Sum embeddings for each example
+        example_sums = torch.zeros(num_examples, D, device=x.device, dtype=x.dtype)
+        example_sums.scatter_add_(0, inverse_indices.unsqueeze(1).expand(-1, D), x_flat)
+        
+        # Count tokens per example for averaging
+        example_counts = torch.zeros(num_examples, device=x.device, dtype=torch.float)
+        example_counts.scatter_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float))
+        
+        # Average the embeddings
+        example_embeddings = example_sums / example_counts.unsqueeze(1)  # (num_examples, D)
+        
+        # Get logits for all examples at once
+        all_logits = self.classify(example_embeddings).squeeze(-1)  # (num_examples,)
+        
+        # Map back to batch structure
+        # Find which batch each example belongs to
+        example_to_batch = (unique_ids // (example_ids.max() + 1)).long()
+        
+        # Count examples per batch
+        examples_per_batch = torch.zeros(B, device=x.device, dtype=torch.long)
+        examples_per_batch.scatter_add_(0, example_to_batch, torch.ones_like(example_to_batch))
+        
+        E_max = examples_per_batch.max().item()
+        
+        # Create output tensors
+        preds_padded = torch.zeros(B, E_max, device=x.device, dtype=all_logits.dtype)
+        example_mask = torch.zeros(B, E_max, dtype=torch.bool, device=x.device)
+        
+        # Fill output tensors efficiently using completely vectorized operations
+        if num_examples > 0:
+            # Create indices for scatter operation
+            batch_indices = example_to_batch  # (num_examples,)
+            
+            # Sort examples by batch for efficient processing
+            sort_indices = torch.argsort(batch_indices)
+            sorted_batch_indices = batch_indices[sort_indices]
+            sorted_logits = all_logits[sort_indices]
+            
+            # Create within-batch position indices using vectorized cumsum approach
+            # Mark batch boundaries
+            is_new_batch = torch.cat([
+                torch.tensor([True], device=x.device),
+                sorted_batch_indices[1:] != sorted_batch_indices[:-1]
+            ])
+            
+            # Create cumulative indices that reset at each batch
+            cumsum_all = torch.arange(len(sorted_batch_indices), device=x.device)
+            reset_values = torch.zeros_like(cumsum_all)
+            reset_values[is_new_batch] = cumsum_all[is_new_batch]
+            
+            # Use cumulative maximum to propagate reset values
+            reset_values = torch.cummax(reset_values, dim=0)[0]
+            within_batch_indices = cumsum_all - reset_values
+            
+            # Use advanced indexing to fill the tensors
+            preds_padded[sorted_batch_indices, within_batch_indices] = sorted_logits
+            example_mask[sorted_batch_indices, within_batch_indices] = True
 
         return preds_padded, x, {"example_mask": example_mask}
 
