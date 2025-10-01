@@ -278,14 +278,14 @@ class StackedLELATransformerBag(nn.Module):
         example_ids = index[:, :, 0]  # (B, S)
         
         # Create a flattened view for efficient processing
-        # Flatten batch and sequence dimensions
-        x_flat = x.view(B * S, D)  # (B*S, D)
-        example_ids_flat = example_ids.view(B * S)  # (B*S,)
+        # Flatten batch and sequence dimensions (use reshape to handle non-contiguous tensors)
+        x_flat = x.reshape(B * S, D)  # (B*S, D)
+        example_ids_flat = example_ids.reshape(B * S)  # (B*S,)
         
         # Create batch offsets to make example IDs unique across batches
         batch_offsets = torch.arange(B, device=x.device).unsqueeze(1) * (example_ids.max() + 1)  # (B, 1)
         example_ids_global = example_ids + batch_offsets  # (B, S) - unique IDs across batches
-        example_ids_global_flat = example_ids_global.view(B * S)  # (B*S,)
+        example_ids_global_flat = example_ids_global.reshape(B * S)  # (B*S,)
         
         # Use scatter_add for efficient pooling
         unique_ids, inverse_indices = torch.unique(example_ids_global_flat, return_inverse=True)
