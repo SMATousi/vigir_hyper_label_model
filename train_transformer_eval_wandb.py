@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=0, help='Number of DataLoader workers (default: 0)')
     parser.add_argument('--num_layers', type=int, default=2, help='Number of transformer layers (default: 2)')
     parser.add_argument('--max_seq_len', type=int, default=800000, help='Maximum sequence length (default: 800000)')
-    parser.add_argument('--eval_frequency', type=int, default=100, help='Evaluation frequency in iterations (default: 100)')
+    parser.add_argument('--eval_frequency', type=int, default=1, help='Evaluation frequency in epochs (default: 1 - evaluate every epoch)')
     parser.add_argument('--project_name', type=str, default='lela-transformer-training', help='Wandb project name')
     return parser.parse_args()
 
@@ -293,26 +293,32 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         if not os.path.exists("model_checkpoints"): 
             os.mkdir("model_checkpoints")
 
-        # Evaluate on datasets at the end of each epoch
-        print(f"\nEvaluating at end of epoch {epoch}...")
-        eval_results = evaluate_on_datasets(net, epoch, i_run)
+        # Evaluate on datasets at specified epoch frequency
+        eval_results = {}
+        current_overall_score = -1.0
         
-        # Check if this is the best model so far for this run
-        current_overall_score = eval_results.get('overall_score', -1.0)
-        if current_overall_score > best_overall_score:
-            best_overall_score = current_overall_score
-            best_epoch = epoch
-            # Save the best model checkpoint
-            best_model_checkpoint = {
-                'n_iter': n_iter,
-                'model_state_dict': net.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_acc_avg': np.mean(val_accs),
-                'eval_results': eval_results,
-                'epoch': epoch,
-                'overall_score': current_overall_score
-            }
-            print(f"New best model at epoch {epoch} with overall score: {current_overall_score:.4f}")
+        if epoch % args.eval_frequency == 0:
+            print(f"\nEvaluating at end of epoch {epoch} (evaluation frequency: {args.eval_frequency})...")
+            eval_results = evaluate_on_datasets(net, epoch, i_run)
+            current_overall_score = eval_results.get('overall_score', -1.0)
+            
+            # Check if this is the best model so far for this run
+            if current_overall_score > best_overall_score:
+                best_overall_score = current_overall_score
+                best_epoch = epoch
+                # Save the best model checkpoint
+                best_model_checkpoint = {
+                    'n_iter': n_iter,
+                    'model_state_dict': net.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_acc_avg': np.mean(val_accs),
+                    'eval_results': eval_results,
+                    'epoch': epoch,
+                    'overall_score': current_overall_score
+                }
+                print(f"New best model at epoch {epoch} with overall score: {current_overall_score:.4f}")
+        else:
+            print(f"Skipping evaluation at epoch {epoch} (next evaluation at epoch {((epoch // args.eval_frequency) + 1) * args.eval_frequency})")
         
         # Save regular checkpoint
         torch.save(
@@ -327,6 +333,41 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
             },
             "model_checkpoints/stacked_bag_model_transformer_" + str(i_run) + ".pt"
             )
+    
+    # Final evaluation if the last epoch wasn't evaluated
+    if epoch % args.eval_frequency != 0:
+        print(f"\nFinal evaluation at end of training (epoch {epoch})...")
+        final_eval_results = evaluate_on_datasets(net, epoch, i_run)
+        final_overall_score = final_eval_results.get('overall_score', -1.0)
+        
+        # Check if this final model is the best
+        if final_overall_score > best_overall_score:
+            best_overall_score = final_overall_score
+            best_epoch = epoch
+            best_model_checkpoint = {
+                'n_iter': n_iter,
+                'model_state_dict': net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc_avg': np.mean(val_accs),
+                'eval_results': final_eval_results,
+                'epoch': epoch,
+                'overall_score': final_overall_score
+            }
+            print(f"Final model is the best with overall score: {final_overall_score:.4f}")
+        
+        # Update the final checkpoint with evaluation results
+        torch.save(
+            {
+                'n_iter': n_iter,
+                'model_state_dict': net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc_avg': np.mean(val_accs),
+                'eval_results': final_eval_results,
+                'epoch': epoch,
+                'overall_score': final_overall_score
+            },
+            "model_checkpoints/stacked_bag_model_transformer_" + str(i_run) + ".pt"
+        )
     
     # Save and upload the best model for this run
     if best_model_checkpoint is not None:
