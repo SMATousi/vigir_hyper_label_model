@@ -211,7 +211,8 @@ class LELATransformerBag(nn.Module):
         for b in range(B):
             gids = example_ids[b]                                        # (S,)
             # stable sort so each SCC's tokens become contiguous
-            perm = torch.argsort(gids, stable=True)
+            # perm = torch.argsort(gids, stable=True)
+            perm = torch.argsort(gids)
             tb   = token_embeds[b, perm, :]                              # (S, D)
             gids_sorted = gids[perm]
 
@@ -277,7 +278,8 @@ class StackedLELATransformerBag(nn.Module):
         per_b_example_vecs = []
         for b in range(index.shape[0]):
             gids = example_ids[b]
-            perm = torch.argsort(gids, stable=True)
+            # perm = torch.argsort(gids, stable=True)
+            perm = torch.argsort(gids)
             tb = x[b, perm, :]
             gids_sorted = gids[perm]
             starts = torch.where(torch.cat([torch.tensor([True], device=gids.device),
