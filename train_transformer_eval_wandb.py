@@ -124,21 +124,27 @@ def evaluate_on_datasets(model, epoch, run_id):
     if os.path.exists(temp_checkpoint_path):
         os.remove(temp_checkpoint_path)
     
-    # Log to wandb
+    # Calculate overall score for model selection
+    overall_score = -1.0
     if eval_results:
-        wandb.log({**eval_results, "epoch": epoch})
-        
         # Calculate and log average scores
         f1_scores = [v for k, v in eval_results.items() if k.endswith('_f1')]
         acc_scores = [v for k, v in eval_results.items() if k.endswith('_accuracy')]
+        
+        if f1_scores or acc_scores:
+            all_scores = f1_scores + acc_scores
+            overall_score = np.mean(all_scores)
+            eval_results['overall_score'] = overall_score
+        
+        # Log to wandb
+        wandb.log({**eval_results, "epoch": epoch})
         
         if f1_scores:
             wandb.log({"eval/avg_f1": np.mean(f1_scores), "epoch": epoch})
         if acc_scores:
             wandb.log({"eval/avg_accuracy": np.mean(acc_scores), "epoch": epoch})
         if f1_scores or acc_scores:
-            all_scores = f1_scores + acc_scores
-            wandb.log({"eval/avg_overall": np.mean(all_scores), "epoch": epoch})
+            wandb.log({"eval/avg_overall": overall_score, "epoch": epoch})
     
     model.train()
     return eval_results
@@ -150,16 +156,22 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         config={
             "run_id": i_run,
             "num_epochs": args.num_epochs,
-            "max_seq_len": args.max_seq_len,
-            "num_layers": args.num_layers,
-            "batch_size": args.batch_size,
+            "data_size": args.data_size,
             "max_n_lfs": args.max_n_lfs,
             "max_examples": args.max_examples,
-            "data_size": args.data_size,
+            "batch_size": args.batch_size,
             "num_workers": args.num_workers,
-            "eval_frequency": args.eval_frequency,
+            "num_layers": args.num_layers,
+            "max_seq_len": args.max_seq_len,
+            "eval_frequency": args.eval_frequency
         }
     )
+    
+    # Track best model for this run
+    best_overall_score = -1.0
+    best_model_checkpoint = None
+    best_epoch = 0
+    
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
     max_seq_len = args.max_seq_len  # Configurable via command line
@@ -285,23 +297,106 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         print(f"\nEvaluating at end of epoch {epoch}...")
         eval_results = evaluate_on_datasets(net, epoch, i_run)
         
+        # Check if this is the best model so far for this run
+        current_overall_score = eval_results.get('overall_score', -1.0)
+        if current_overall_score > best_overall_score:
+            best_overall_score = current_overall_score
+            best_epoch = epoch
+            # Save the best model checkpoint
+            best_model_checkpoint = {
+                'n_iter': n_iter,
+                'model_state_dict': net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_acc_avg': np.mean(val_accs),
+                'eval_results': eval_results,
+                'epoch': epoch,
+                'overall_score': current_overall_score
+            }
+            print(f"New best model at epoch {epoch} with overall score: {current_overall_score:.4f}")
+        
+        # Save regular checkpoint
         torch.save(
             {
                 'n_iter': n_iter,
                 'model_state_dict': net.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc_avg':np.mean(val_accs),
+                'eval_results': eval_results,
+                'epoch': epoch,
+                'overall_score': current_overall_score
             },
             "model_checkpoints/stacked_bag_model_transformer_" + str(i_run) + ".pt"
             )
+    
+    # Save and upload the best model for this run
+    if best_model_checkpoint is not None:
+        best_model_path = f"model_checkpoints/best_model_run_{i_run}.pt"
+        torch.save(best_model_checkpoint, best_model_path)
+        
+        # Upload best model to wandb
+        artifact = wandb.Artifact(
+            name=f"best_model_run_{i_run}",
+            type="model",
+            description=f"Best model from run {i_run} at epoch {best_epoch} with overall score {best_overall_score:.4f}",
+            metadata={
+                "run_id": i_run,
+                "best_epoch": best_epoch,
+                "best_overall_score": best_overall_score,
+                "eval_results": best_model_checkpoint['eval_results']
+            }
+        )
+        artifact.add_file(best_model_path)
+        wandb.log_artifact(artifact)
+        
+        print(f"Uploaded best model from run {i_run} to wandb (epoch {best_epoch}, score: {best_overall_score:.4f})")
     
     # Finish wandb run
     wandb.finish()
 
 #select the best run
 val_accs = []
+overall_scores = []
 for i in range(NUM_RUNS): 
     checkpoint = torch.load("model_checkpoints/stacked_bag_model_transformer_"+str(i)+".pt", map_location="cpu")
     val_accs.append(checkpoint['val_acc_avg'])
-best_run = np.argmax(val_accs)
+    overall_scores.append(checkpoint.get('overall_score', -1.0))
+
+# Select best run based on overall evaluation score
+best_run = np.argmax(overall_scores)
+best_overall_score = overall_scores[best_run]
+print('Best run:', best_run, 'with overall score:', f"{best_overall_score:.4f}")
 print('Please use the checkpoint:', "stacked_bag_model_transformer_" + str(best_run) + ".pt")
+
+# Upload the overall best model to wandb
+wandb.init(
+    project=args.project_name,
+    name="final_best_model",
+    job_type="model_selection"
+)
+
+# Load the best model from the best run
+best_model_path = f"model_checkpoints/best_model_run_{best_run}.pt"
+if os.path.exists(best_model_path):
+    best_checkpoint = torch.load(best_model_path, map_location="cpu")
+    
+    # Create final best model artifact
+    final_artifact = wandb.Artifact(
+        name="final_best_model",
+        type="model",
+        description=f"Overall best model from run {best_run} with score {best_overall_score:.4f}",
+        metadata={
+            "best_run_id": best_run,
+            "best_epoch": best_checkpoint.get('epoch', 0),
+            "best_overall_score": best_overall_score,
+            "all_run_scores": overall_scores,
+            "eval_results": best_checkpoint.get('eval_results', {})
+        }
+    )
+    final_artifact.add_file(best_model_path)
+    wandb.log_artifact(final_artifact)
+    
+    print(f"Uploaded final best model to wandb (run {best_run}, score: {best_overall_score:.4f})")
+else:
+    print(f"Warning: Best model file not found at {best_model_path}")
+
+wandb.finish()
