@@ -264,27 +264,40 @@ class StackedBagAttentionGNN(nn.Module):
         for gnn_layer in self.gnn_layers:
             _, current_embeddings = gnn_layer(index, current_embeddings)
         
-        # 4. Final example-level aggregation and classification
-        example_embeddings = sparse_mean(index[:, :, 0], current_embeddings, expand=False)
-        example_logits = self.classify(example_embeddings).squeeze(-1)
+        # 4. Final example-level aggregation and classification (matching original LELATransformerBag)
+        example_ids = index[:, :, 0]  # (B, S)
+        per_b_logits = []  # list of tensors with shape (E_b,)
         
-        # 5. Create example mask and apply it to logits (avoid in-place operations)
-        E_max = example_embeddings.shape[1]
-        example_mask = torch.ones(B, E_max, dtype=torch.bool, device=example_embeddings.device)
-        
-        # Handle cases where some batches might have fewer examples
         for b in range(B):
-            unique_examples = torch.unique(index[b, :, 0])
-            actual_examples = len(unique_examples)
-            if actual_examples < E_max:
-                example_mask[b, actual_examples:] = False
+            gids = example_ids[b]  # (S,)
+            embeddings_b = current_embeddings[b]  # (S, D)
+            
+            # Get unique example IDs and their first occurrence positions
+            unique_gids, inverse_indices = torch.unique(gids, return_inverse=True)
+            
+            # Aggregate embeddings for each unique example
+            example_embeds = []
+            for unique_id in unique_gids:
+                mask = (gids == unique_id)
+                example_embed = embeddings_b[mask].mean(dim=0, keepdim=True)  # (1, D)
+                example_embeds.append(example_embed)
+            
+            example_embeds = torch.cat(example_embeds, dim=0)  # (E_b, D)
+            batch_logits = self.classify(example_embeds).squeeze(-1)  # (E_b,)
+            per_b_logits.append(batch_logits)
         
-        # Apply mask to logits without in-place operation
-        example_logits = example_logits * example_mask.float()
+        # 5. Pad to (B, E_max) and build example_mask (matching original behavior)
+        E_max = max(v.numel() for v in per_b_logits) if per_b_logits else 0
+        example_logits = current_embeddings.new_zeros((B, E_max))  # (B, E_max)
+        example_mask = torch.zeros((B, E_max), dtype=torch.bool, device=current_embeddings.device)
+        
+        for b, vec in enumerate(per_b_logits):
+            L = vec.numel()
+            example_logits[b, :L] = vec
+            example_mask[b, :L] = True
         
         aux = {
             "example_mask": example_mask,
-            "example_embeddings": example_embeddings,
             "bag_aux": bag_aux
         }
         
