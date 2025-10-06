@@ -2,7 +2,7 @@ import torch.optim as optim
 import torch
 from torch.utils.data import DataLoader
 from data import DatasetOnlineGen
-from bag_attention_gnn import StackedBagAttentionGNN
+from bag_attention_gnn import StackedBagAttentionGNN, BagAttentionGNNModelWrapper
 from loss import  BCEMask
 import numpy as np
 from data import SytheticValidation, load_dataset_wrench
@@ -274,8 +274,10 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                 if n_iter%eval_fre==0:
                     net.eval()
                     with torch.no_grad():
+                        # Wrap model for data.py compatibility (returns 2 values instead of 3)
+                        wrapped_net = BagAttentionGNNModelWrapper(net)
                         test_score_sythetic_ind = valid.get_avg_score_sythetic(
-                            net)
+                            wrapped_net)
                     writer.add_scalar('score/test_syth_acc_ind',
                                         test_score_sythetic_ind, n_iter)
                     val_accs.append(test_score_sythetic_ind)

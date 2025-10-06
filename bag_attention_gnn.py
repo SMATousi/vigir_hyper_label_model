@@ -304,6 +304,37 @@ class StackedBagAttentionGNN(nn.Module):
         return example_logits, current_embeddings, aux
 
 
+class BagAttentionGNNModelWrapper(nn.Module):
+    """
+    Simple wrapper that makes our model compatible with data.py by returning only 2 values.
+    This is used by data.py's pred_binary_class function.
+    """
+    
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    
+    def forward(self, index: torch.Tensor, value: torch.Tensor):
+        """Return only 2 values for data.py compatibility."""
+        preds, embeddings, aux = self.model(index, value)
+        return preds, embeddings
+    
+    def parameters(self):
+        return self.model.parameters()
+    
+    def to(self, device):
+        self.model.to(device)
+        return self
+    
+    def eval(self):
+        self.model.eval()
+        return self
+    
+    def train(self, mode=True):
+        self.model.train(mode)
+        return self
+
+
 # Wrapper for inference (similar to LELATransformerBagWrapper)
 class BagAttentionGNNWrapper:
     """
