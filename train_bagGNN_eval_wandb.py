@@ -238,68 +238,68 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         epoch += 1
         for i, (index, value, labels) in enumerate(dataloader):
 
-            try:
-                # Place tensors on GPU
-                index = index.int()
-                index, value, labels = index.squeeze().to(
-                    device), value.squeeze().to(device), labels.squeeze().to(device)
+            # try:
+            # Place tensors on GPU
+            index = index.int()
+            index, value, labels = index.squeeze().to(
+                device), value.squeeze().to(device), labels.squeeze().to(device)
 
-                outputs, _, aux = net(index, value)     # outputs: (B, E_max)
-                print("outputs.shape", outputs.shape)
-                B, E_max = outputs.shape
-                E = labels.shape[1]
-                if E < E_max:
-                    pad = torch.full((B, E_max - E), -1, dtype=labels.dtype, device=labels.device)
-                    labels = torch.cat([labels, pad], dim=1)
+            outputs, _, aux = net(index, value)     # outputs: (B, E_max)
+            print("outputs.shape", outputs.shape)
+            B, E_max = outputs.shape
+            E = labels.shape[1]
+            if E < E_max:
+                pad = torch.full((B, E_max - E), -1, dtype=labels.dtype, device=labels.device)
+                labels = torch.cat([labels, pad], dim=1)
 
-                # print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
-                mask = aux["example_mask"] & (labels != -1)
-                print("mask.shape", mask.shape)
-                loss = criterion(outputs, labels.float(), mask)
-                print("loss.shape", loss.shape)
-                loss.backward()
+            # print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
+            mask = aux["example_mask"] & (labels != -1)
+            print("mask.shape", mask.shape)
+            loss = criterion(outputs, labels.float(), mask)
+            print("loss.shape", loss.shape)
+            loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+            
+            optimizer.step()
+            optimizer.zero_grad()
+
+            l_value = loss.item()
+
+            n_iter += 1
+
+            eval_fre = args.eval_frequency
+            losses.append(l_value)
+            if n_iter%eval_fre==0:
+                net.eval()
+                with torch.no_grad():
+                    # Wrap model for data.py compatibility (returns 2 values instead of 3)
+                    wrapped_net = BagAttentionGNNModelWrapper(net)
+                    test_score_sythetic_ind = valid.get_avg_score_sythetic(
+                        wrapped_net)
+                writer.add_scalar('score/test_syth_acc_ind',
+                                    test_score_sythetic_ind, n_iter)
+                val_accs.append(test_score_sythetic_ind)
+                l_avg = np.mean(losses[-1000:])
+                writer.add_scalar('score/train_loss_iter',l_avg, n_iter)
                 
-                # Gradient clipping to prevent exploding gradients
-                torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
-                
-                optimizer.step()
-                optimizer.zero_grad()
-
-                l_value = loss.item()
-
-                n_iter += 1
-
-                eval_fre = args.eval_frequency
-                losses.append(l_value)
-                if n_iter%eval_fre==0:
-                    net.eval()
-                    with torch.no_grad():
-                        # Wrap model for data.py compatibility (returns 2 values instead of 3)
-                        wrapped_net = BagAttentionGNNModelWrapper(net)
-                        test_score_sythetic_ind = valid.get_avg_score_sythetic(
-                            wrapped_net)
-                    writer.add_scalar('score/test_syth_acc_ind',
-                                        test_score_sythetic_ind, n_iter)
-                    val_accs.append(test_score_sythetic_ind)
-                    l_avg = np.mean(losses[-1000:])
-                    writer.add_scalar('score/train_loss_iter',l_avg, n_iter)
-                    
-                    if LOG_WANDB:
-                        # Log to wandb
-                        wandb.log({
-                            "train/loss": l_avg,
-                            "train/synthetic_val_acc": test_score_sythetic_ind,
-                            "train/iteration": n_iter
-                        })
-                    if l_avg< min_loss:
-                        min_loss = l_avg
-                        n_not_improved = 0
-                    else:
-                        n_not_improved+=eval_fre
-                    net.train()
-            except Exception as e:
-                print(e)
-                continue
+                if LOG_WANDB:
+                    # Log to wandb
+                    wandb.log({
+                        "train/loss": l_avg,
+                        "train/synthetic_val_acc": test_score_sythetic_ind,
+                        "train/iteration": n_iter
+                    })
+                if l_avg< min_loss:
+                    min_loss = l_avg
+                    n_not_improved = 0
+                else:
+                    n_not_improved+=eval_fre
+                net.train()
+            # except Exception as e:
+            #     print(e)
+            #     continue
         if not os.path.exists("model_checkpoints"): 
             os.mkdir("model_checkpoints")
 
