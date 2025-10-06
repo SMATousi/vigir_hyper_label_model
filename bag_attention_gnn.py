@@ -9,98 +9,104 @@ from scipy.sparse import coo_matrix
 from bag_attention_model import BagAttentionLayer
 
 
-class MessagePassingLayer(nn.Module):
-    """
-    Graph Neural Network message passing layer with two types of edges:
-    1. Solid yellow edges: intra-type connections (LF-to-LF, SCC-to-SCC)
-    2. Dashed blue edges: inter-type connections (LF-to-SCC, SCC-to-LF)
+def sparse_mean(index, value, expand=True):
+    """Sparse mean pooling operation (from model.py)
     
-    Note: No global multi-head attention to avoid memory explosion with large datasets.
+    Args:
+        index: The indices of the elements, the first dimension is batch size 
+        value: The values of the elements, the first dimension is batch size
+        expand (bool, optional): if true expand the output to have the same size as index
+
+    Returns:
+        mean values
+    """
+    output_batch = []
+    ind_max = int(index.max() + 1)
+    for i_batch in range(value.shape[0]):
+        output = torch.zeros((ind_max, value.shape[2])).float().to(value.device).index_add_(0,
+                                                                                    index[i_batch],
+                                                                                    value[i_batch])
+        norm = torch.zeros(ind_max).to(value.device).float().index_add_(
+            0, index[i_batch], torch.ones_like(index[i_batch]).float()) + 1e-9
+        output = output / norm[:, None].float()
+        if expand:
+            output = torch.index_select(output, 0, index[i_batch])
+        output_batch.append(output)
+    return torch.stack(output_batch)
+
+
+class SparseGNNLayer(nn.Module):
+    """
+    Sparse GNN layer similar to model.py but enhanced for bag attention + GNN hybrid.
+    Uses sparse operations to avoid memory explosion with large datasets.
+    
+    Implements message passing with:
+    1. Row pooling (intra-SCC communication)
+    2. Column pooling (intra-LF communication) 
+    3. Global pooling (global context)
+    4. Self-connection
     """
     
-    def __init__(self, embedding_dim: int):
+    def __init__(self, in_features: int, out_features: int):
         super().__init__()
-        self.embedding_dim = embedding_dim
+        self.in_features = in_features
+        self.out_features = out_features
         
-        # Weight matrices for different edge types
-        self.W1 = nn.Linear(embedding_dim, embedding_dim)  # Intra-type (yellow edges)
-        self.W2 = nn.Linear(embedding_dim, embedding_dim)  # Inter-type LF->SCC (blue edges)
-        self.W3 = nn.Linear(embedding_dim, embedding_dim)  # Inter-type SCC->LF (blue edges)
-        self.W4 = nn.Linear(embedding_dim, embedding_dim)  # Self-connection
+        # Weight matrices following model.py pattern
+        self.linear_row = nn.Linear(in_features, in_features)    # W1: Row pooling (SCC-level)
+        self.linear_col = nn.Linear(in_features, in_features)    # W2: Column pooling (LF-level)
+        self.linear_global = nn.Linear(in_features, in_features) # W3: Global context
+        self.linear_self = nn.Linear(in_features, in_features)   # W4: Self-connection
         
-        # Aggregation function (linear layer with ReLU)
-        self.aggregation = nn.Sequential(
-            nn.Linear(embedding_dim, embedding_dim),
-            nn.ReLU(),
-            nn.LayerNorm(embedding_dim)
-        )
+        # Final aggregation (combines all 4 message types)
+        self.linear_combine = nn.Linear(in_features * 4, out_features)
+        self.activation = nn.LeakyReLU()
+        self.layer_norm = nn.LayerNorm(out_features)
         
-    def forward(
-        self, 
-        node_embeddings: torch.Tensor,  # (B, N, D) - all nodes (LF tokens + SCC nodes)
-        node_types: torch.Tensor,       # (B, N) - 0 for LF tokens, 1 for SCC nodes
-        adjacency_intra: torch.Tensor,  # (B, N, N) - intra-type adjacency (yellow edges)
-        adjacency_inter: torch.Tensor,  # (B, N, N) - inter-type adjacency (blue edges)
-        node_mask: torch.Tensor         # (B, N) - mask for valid nodes
-    ) -> torch.Tensor:
+    def forward(self, index: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Perform message passing with two types of edges.
+        Sparse GNN forward pass similar to model.py but with bag attention enhancements.
         
         Args:
-            node_embeddings: Node embeddings (B, N, D)
-            node_types: Node types - 0 for LF tokens, 1 for SCC nodes (B, N)
-            adjacency_intra: Intra-type adjacency matrix (B, N, N)
-            adjacency_inter: Inter-type adjacency matrix (B, N, N)
-            node_mask: Valid node mask (B, N)
+            index: (B, S, 2) - [example_id, lf_id] indices
+            value: (B, S, D) - token embeddings
             
         Returns:
-            Updated node embeddings (B, N, D)
+            index: (B, S, 2) - unchanged indices
+            updated_embeddings: (B, S, D) - updated token embeddings
         """
-        B, N, D = node_embeddings.shape
-        
-        # 1. Intra-type message passing (yellow edges)
-        intra_messages = torch.bmm(adjacency_intra, self.W1(node_embeddings))  # (B, N, D)
-        
-        # 2. Inter-type message passing (blue edges)
-        inter_messages = torch.bmm(adjacency_inter, self.W2(node_embeddings))  # (B, N, D)
-        
-        # 3. Self-connection
-        self_messages = self.W4(node_embeddings)  # (B, N, D)
-        
-        # 4. Aggregate all messages
-        # Average pooling with normalization
-        degree_intra = adjacency_intra.sum(dim=-1, keepdim=True).clamp(min=1)  # (B, N, 1)
-        degree_inter = adjacency_inter.sum(dim=-1, keepdim=True).clamp(min=1)  # (B, N, 1)
-        
-        normalized_intra = intra_messages / degree_intra
-        normalized_inter = inter_messages / degree_inter
+        # Sparse pooling operations (no dense adjacency matrices!)
+        row_pooled = self.linear_row(sparse_mean(index[:, :, 0], value))      # Pool by example (SCC)
+        col_pooled = self.linear_col(sparse_mean(index[:, :, 1], value))      # Pool by LF
+        global_pooled = self.linear_global(torch.mean(value, dim=1)).unsqueeze(1).expand_as(value)  # Global context
+        self_connection = self.linear_self(value)  # Self-connection
         
         # Combine all message types
-        combined_messages = (
-            normalized_intra + 
-            normalized_inter + 
-            self_messages
-        )
+        combined = torch.cat([
+            self_connection,
+            row_pooled, 
+            col_pooled,
+            global_pooled
+        ], dim=2)  # (B, S, 4*D)
         
-        # Apply aggregation function
-        updated_embeddings = self.aggregation(combined_messages)
+        # Final transformation
+        output = self.activation(self.linear_combine(combined))  # (B, S, out_features)
+        output = self.layer_norm(output)
         
-        # Apply mask to zero out invalid nodes
-        updated_embeddings = updated_embeddings * node_mask.unsqueeze(-1)
-        
-        return updated_embeddings
+        return index, output
 
 
 class BagAttentionGNN(nn.Module):
     """
-    Hybrid model combining bag attention mechanism with GNN message passing.
+    Hybrid model combining bag attention mechanism with sparse GNN message passing.
     
     Architecture:
     1. Input embedding of LF outputs
-    2. Create virtual SCC nodes
-    3. Apply bag attention within each SCC
-    4. Perform GNN message passing between SCCs and LF tokens
-    5. Final classification
+    2. Apply bag attention within each SCC
+    3. Apply sparse GNN layers for inter-SCC communication
+    4. Final classification on example-level embeddings
+    
+    Memory efficient: Uses sparse operations, no dense adjacency matrices.
     """
     
     def __init__(
@@ -125,12 +131,9 @@ class BagAttentionGNN(nn.Module):
             use_lf_reliability=use_lf_reliability
         )
         
-        # SCC node embedding (learnable embeddings for virtual SCC nodes)
-        self.scc_embed = nn.Parameter(torch.randn(embedding_dim) * 0.02)
-        
-        # GNN message passing layers
+        # Sparse GNN layers for message passing
         self.gnn_layers = nn.ModuleList([
-            MessagePassingLayer(embedding_dim)
+            SparseGNNLayer(embedding_dim, embedding_dim)
             for _ in range(num_gnn_layers)
         ])
         
@@ -142,60 +145,10 @@ class BagAttentionGNN(nn.Module):
             nn.Linear(2 * embedding_dim, 1),
             nn.Sigmoid()
         )
-        
-    def _create_adjacency_matrices(
-        self, 
-        index: torch.Tensor, 
-        node_types: torch.Tensor,
-        num_nodes: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Create adjacency matrices for intra-type and inter-type connections.
-        
-        Args:
-            index: (B, S, 2) - LF token indices
-            node_types: (B, N) - node types (0=LF, 1=SCC)
-            num_nodes: Total number of nodes per batch
-            
-        Returns:
-            adjacency_intra: (B, N, N) - intra-type connections
-            adjacency_inter: (B, N, N) - inter-type connections
-        """
-        B, S = index.shape[:2]
-        device = index.device
-        
-        adjacency_intra = torch.zeros(B, num_nodes, num_nodes, device=device)
-        adjacency_inter = torch.zeros(B, num_nodes, num_nodes, device=device)
-        
-        for b in range(B):
-            example_ids = index[b, :, 0]  # (S,)
-            
-            # Create intra-type connections (LF tokens within same SCC)
-            for scc_id in torch.unique(example_ids):
-                # Find LF tokens belonging to this SCC
-                lf_mask = (example_ids == scc_id)
-                lf_indices = torch.where(lf_mask)[0]
-                
-                # Connect all LF tokens within this SCC (yellow edges)
-                for i in lf_indices:
-                    for j in lf_indices:
-                        if i != j:  # No self-loops for intra-type
-                            adjacency_intra[b, i, j] = 1.0
-                
-                # Find corresponding SCC node index
-                scc_node_idx = S + scc_id.item()  # SCC nodes start after LF tokens
-                
-                # Create inter-type connections (blue edges)
-                # LF tokens <-> SCC node
-                for lf_idx in lf_indices:
-                    adjacency_inter[b, lf_idx, scc_node_idx] = 1.0  # LF -> SCC
-                    adjacency_inter[b, scc_node_idx, lf_idx] = 1.0  # SCC -> LF
-        
-        return adjacency_intra, adjacency_inter
     
     def forward(self, index: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         """
-        Forward pass combining bag attention and GNN message passing.
+        Sparse forward pass combining bag attention and GNN message passing.
         
         Args:
             index: (B, S, 2) - [example_id, lf_id]
@@ -203,11 +156,10 @@ class BagAttentionGNN(nn.Module):
             
         Returns:
             preds_padded: (B, E_max) - predictions per example
-            node_embeddings: (B, N, D) - final node embeddings
+            token_embeddings: (B, S, D) - final token embeddings
             aux: auxiliary information
         """
         B, S = value.shape
-        device = value.device
         
         # 1. Embed LF outputs
         lf_embeddings = self.input_embed(value.float().unsqueeze(-1))  # (B, S, D)
@@ -215,85 +167,42 @@ class BagAttentionGNN(nn.Module):
         # 2. Apply bag attention to get refined LF embeddings
         _, refined_lf_embeddings, bag_aux = self.bag_attention(index, lf_embeddings)  # (B, S, D)
         
-        # 3. Create virtual SCC nodes
-        example_ids = index[:, :, 0]  # (B, S)
-        max_scc_per_batch = []
-        
-        for b in range(B):
-            unique_sccs = torch.unique(example_ids[b])
-            max_scc_per_batch.append(len(unique_sccs))
-        
-        max_sccs = max(max_scc_per_batch)
-        
-        # Create SCC node embeddings
-        scc_embeddings = self.scc_embed.unsqueeze(0).unsqueeze(0).expand(B, max_sccs, -1)  # (B, max_sccs, D)
-        
-        # 4. Combine LF and SCC nodes
-        total_nodes = S + max_sccs
-        node_embeddings = torch.cat([refined_lf_embeddings, scc_embeddings], dim=1)  # (B, S+max_sccs, D)
-        
-        # Create node type indicators (0=LF, 1=SCC)
-        lf_types = torch.zeros(B, S, device=device)
-        scc_types = torch.ones(B, max_sccs, device=device)
-        node_types = torch.cat([lf_types, scc_types], dim=1)  # (B, S+max_sccs)
-        
-        # Create node mask
-        node_mask = torch.ones(B, S, device=device)  # All LF tokens are valid
-        scc_mask = torch.zeros(B, max_sccs, device=device)
-        for b, num_sccs in enumerate(max_scc_per_batch):
-            scc_mask[b, :num_sccs] = 1.0
-        node_mask = torch.cat([node_mask, scc_mask], dim=1)  # (B, S+max_sccs)
-        
-        # 5. Create adjacency matrices
-        adjacency_intra, adjacency_inter = self._create_adjacency_matrices(
-            index, node_types, total_nodes
-        )
-        
-        # 6. Apply GNN message passing layers
+        # 3. Apply sparse GNN layers for message passing
+        current_embeddings = refined_lf_embeddings
         for gnn_layer in self.gnn_layers:
-            node_embeddings = gnn_layer(
-                node_embeddings, node_types, adjacency_intra, adjacency_inter, node_mask
-            )
+            _, current_embeddings = gnn_layer(index, current_embeddings)  # (B, S, D)
         
-        # 7. Extract SCC embeddings and classify
-        scc_embeddings_final = node_embeddings[:, S:, :]  # (B, max_sccs, D)
+        # 4. Aggregate token embeddings by example to get example-level embeddings
+        example_embeddings = sparse_mean(index[:, :, 0], current_embeddings, expand=False)  # (B, E_max, D)
         
-        # Apply classification to each SCC
-        scc_logits = []
+        # 5. Apply classification to each example
+        example_logits = self.classify(example_embeddings).squeeze(-1)  # (B, E_max)
+        
+        # 6. Create example mask (all examples from sparse_mean are valid)
+        E_max = example_embeddings.shape[1]
+        example_mask = torch.ones(B, E_max, dtype=torch.bool, device=example_embeddings.device)
+        
+        # Handle cases where some batches might have fewer examples
         for b in range(B):
-            num_sccs = max_scc_per_batch[b]
-            if num_sccs > 0:
-                batch_scc_embeds = scc_embeddings_final[b, :num_sccs, :]  # (num_sccs, D)
-                batch_logits = self.classify(batch_scc_embeds).squeeze(-1)  # (num_sccs,)
-                scc_logits.append(batch_logits)
-            else:
-                scc_logits.append(torch.empty(0, device=device))
-        
-        # 8. Pad predictions
-        E_max = max(len(logits) for logits in scc_logits) if scc_logits else 0
-        preds_padded = torch.zeros(B, E_max, device=device)
-        example_mask = torch.zeros(B, E_max, dtype=torch.bool, device=device)
-        
-        for b, logits in enumerate(scc_logits):
-            L = len(logits)
-            if L > 0:
-                preds_padded[b, :L] = logits
-                example_mask[b, :L] = True
+            unique_examples = torch.unique(index[b, :, 0])
+            actual_examples = len(unique_examples)
+            if actual_examples < E_max:
+                example_mask[b, actual_examples:] = False
+                example_logits[b, actual_examples:] = 0.0
         
         aux = {
             "example_mask": example_mask,
-            "node_embeddings": node_embeddings,
-            "adjacency_intra": adjacency_intra,
-            "adjacency_inter": adjacency_inter,
+            "example_embeddings": example_embeddings,
             "bag_aux": bag_aux
         }
         
-        return preds_padded, node_embeddings, aux
+        return example_logits, current_embeddings, aux
 
 
 class StackedBagAttentionGNN(nn.Module):
     """
     Stacked version of BagAttentionGNN for deeper architectures.
+    Uses sparse operations throughout for memory efficiency.
     """
     
     def __init__(
@@ -305,19 +214,28 @@ class StackedBagAttentionGNN(nn.Module):
         use_lf_reliability: bool = False
     ):
         super().__init__()
+        self.embedding_dim = embedding_dim
+        self.num_layers = num_layers
+        
+        # Input embedding
         self.input_embed = nn.Linear(1, embedding_dim)
         
-        self.layers = nn.ModuleList([
-            BagAttentionGNN(
-                max_lf_id=max_lf_id,
-                embedding_dim=embedding_dim,
-                num_gnn_layers=num_gnn_layers,
-                use_lf_reliability=use_lf_reliability
-            )
-            for _ in range(num_layers)
+        # Bag attention layer
+        self.bag_attention = BagAttentionLayer(
+            in_features=embedding_dim,
+            out_features=embedding_dim,
+            lf_vocab_size=max_lf_id + 1,
+            use_lf_reliability=use_lf_reliability
+        )
+        
+        # Multiple sparse GNN layers
+        self.gnn_layers = nn.ModuleList([
+            SparseGNNLayer(embedding_dim, embedding_dim)
+            for _ in range(num_layers * num_gnn_layers)  # Total GNN layers across all stacks
         ])
         
-        self.final_classify = nn.Sequential(
+        # Final classification
+        self.classify = nn.Sequential(
             nn.Linear(embedding_dim, 2 * embedding_dim),
             nn.LeakyReLU(),
             nn.Dropout(0.1),
@@ -329,17 +247,44 @@ class StackedBagAttentionGNN(nn.Module):
     
     def forward(self, index: torch.Tensor, value: torch.Tensor):
         """
-        Forward pass through stacked BagAttentionGNN layers.
+        Forward pass through stacked sparse GNN layers.
         """
-        current_value = value
+        B, S = value.shape
         
-        for layer in self.layers:
-            preds, node_embeds, aux = layer(index, current_value)
-            # Use node embeddings as input for next layer (only LF tokens)
-            S = current_value.shape[1]
-            current_value = node_embeds[:, :S, :].mean(dim=-1)  # (B, S)
+        # 1. Embed LF outputs
+        lf_embeddings = self.input_embed(value.float().unsqueeze(-1))  # (B, S, D)
         
-        return preds, node_embeds, aux
+        # 2. Apply bag attention
+        _, refined_embeddings, bag_aux = self.bag_attention(index, lf_embeddings)
+        
+        # 3. Apply all GNN layers sequentially
+        current_embeddings = refined_embeddings
+        for gnn_layer in self.gnn_layers:
+            _, current_embeddings = gnn_layer(index, current_embeddings)
+        
+        # 4. Final example-level aggregation and classification
+        example_embeddings = sparse_mean(index[:, :, 0], current_embeddings, expand=False)
+        example_logits = self.classify(example_embeddings).squeeze(-1)
+        
+        # 5. Create example mask
+        E_max = example_embeddings.shape[1]
+        example_mask = torch.ones(B, E_max, dtype=torch.bool, device=example_embeddings.device)
+        
+        # Handle variable number of examples per batch
+        for b in range(B):
+            unique_examples = torch.unique(index[b, :, 0])
+            actual_examples = len(unique_examples)
+            if actual_examples < E_max:
+                example_mask[b, actual_examples:] = False
+                example_logits[b, actual_examples:] = 0.0
+        
+        aux = {
+            "example_mask": example_mask,
+            "example_embeddings": example_embeddings,
+            "bag_aux": bag_aux
+        }
+        
+        return example_logits, current_embeddings, aux
 
 
 # Wrapper for inference (similar to LELATransformerBagWrapper)
