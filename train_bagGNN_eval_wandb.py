@@ -38,6 +38,7 @@ def parse_args():
 args = parse_args()
 NUM_RUNS = args.num_runs
 LOG_WANDB = args.log_wandb
+log_wandb = args.log_wandb
 
 # Evaluation datasets (same as in performance_exp_transformer.py)
 EVAL_DATASETS = [
