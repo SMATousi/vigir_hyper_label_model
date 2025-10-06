@@ -247,11 +247,11 @@ class SytheticValidation:
                 X, 0)), torch.from_numpy(np.expand_dims(y, 0))
             pred = pred_binary_class(model, inputs)
             pred = pred.detach().cpu().numpy()
-            pred_round = np.array(pred > 0.5).astype(int)
-            print("pred_round", pred_round.shape)
-            print("labels", labels.shape)
+            pred_round = np.array(pred > 0.5).astype(int).squeeze()
+            # print("pred_round", pred_round.shape)
+            # print("labels", labels.shape)
             gt_labels = labels.numpy().flatten().astype(int)
-            print("gt_labels", gt_labels.shape)
+            # print("gt_labels", gt_labels.shape)
             pred_round = pred_round[gt_labels >= 0]
             gt_labels = gt_labels[gt_labels >= 0]
             acc = accuracy_score(gt_labels, pred_round)
