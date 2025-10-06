@@ -243,6 +243,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                     device), value.squeeze().to(device), labels.squeeze().to(device)
 
                 outputs, _, aux = net(index, value)     # outputs: (B, E_max)
+                print("outputs.shape", outputs.shape)
                 B, E_max = outputs.shape
                 E = labels.shape[1]
                 if E < E_max:
@@ -251,7 +252,9 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
 
                 # print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
                 mask = aux["example_mask"] & (labels != -1)
+                print("mask.shape", mask.shape)
                 loss = criterion(outputs, labels.float(), mask)
+                print("loss.shape", loss.shape)
                 loss.backward()
                 
                 # Gradient clipping to prevent exploding gradients
