@@ -248,7 +248,10 @@ class SytheticValidation:
             pred = pred_binary_class(model, inputs)
             pred = pred.detach().cpu().numpy()
             pred_round = np.array(pred > 0.5).astype(int)
+            print("pred_round", pred_round)
+            print("labels", labels)
             gt_labels = labels.numpy().flatten().astype(int)
+            print("gt_labels", gt_labels)
             pred_round = pred_round[gt_labels >= 0]
             gt_labels = gt_labels[gt_labels >= 0]
             acc = accuracy_score(gt_labels, pred_round)
