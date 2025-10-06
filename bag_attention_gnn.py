@@ -331,7 +331,7 @@ class StackedBagAttentionGNN(nn.Module):
         self, 
         max_lf_id: int = 0, 
         embedding_dim: int = 16, 
-        num_layers: int = 4,
+        num_layers: int = 2,
         num_gnn_layers: int = 2,
         num_attention_heads: int = 4,
         use_lf_reliability: bool = False

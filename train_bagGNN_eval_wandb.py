@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument('--eval_frequency', type=int, default=1, help='Evaluation frequency in epochs (default: 1 - evaluate every epoch)')
     parser.add_argument('--project_name', type=str, default='lela-transformer-training', help='Wandb project name')
     parser.add_argument('--log-wandb', type=bool, default=False, help='Log to wandb (default: False)')
+    parser.add_argument('--num_gnn_layers', type=int, default=2, help='Number of GNN layers (default: 2)')
     return parser.parse_args()
 
 args = parse_args()
@@ -178,7 +179,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
     max_seq_len = args.max_seq_len  # Configurable via command line
-    net = StackedBagAttentionGNN(num_layers=args.num_layers)
+    net = StackedBagAttentionGNN(num_gnn_layers=args.num_gnn_layers)
 
     optimizer = optim.Adam(
         net.parameters(),
