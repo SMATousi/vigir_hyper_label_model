@@ -10,7 +10,7 @@ from bag_attention_model import BagAttentionLayer
 
 
 def sparse_mean(index, value, expand=True):
-    """Sparse mean pooling operation (from model.py)
+    """Sparse mean pooling operation (gradient-safe version)
     
     Args:
         index: The indices of the elements, the first dimension is batch size 
@@ -23,11 +23,13 @@ def sparse_mean(index, value, expand=True):
     output_batch = []
     ind_max = int(index.max() + 1)
     for i_batch in range(value.shape[0]):
-        output = torch.zeros((ind_max, value.shape[2])).float().to(value.device).index_add_(0,
-                                                                                    index[i_batch],
-                                                                                    value[i_batch])
-        norm = torch.zeros(ind_max).to(value.device).float().index_add_(
-            0, index[i_batch], torch.ones_like(index[i_batch]).float()) + 1e-9
+        # Use non-in-place operations to avoid gradient issues
+        output_base = torch.zeros((ind_max, value.shape[2])).float().to(value.device)
+        output = output_base.index_add(0, index[i_batch], value[i_batch])
+        
+        norm_base = torch.zeros(ind_max).to(value.device).float()
+        norm = norm_base.index_add(0, index[i_batch], torch.ones_like(index[i_batch]).float()) + 1e-9
+        
         output = output / norm[:, None].float()
         if expand:
             output = torch.index_select(output, 0, index[i_batch])
@@ -266,17 +268,19 @@ class StackedBagAttentionGNN(nn.Module):
         example_embeddings = sparse_mean(index[:, :, 0], current_embeddings, expand=False)
         example_logits = self.classify(example_embeddings).squeeze(-1)
         
-        # 5. Create example mask
+        # 5. Create example mask and apply it to logits (avoid in-place operations)
         E_max = example_embeddings.shape[1]
         example_mask = torch.ones(B, E_max, dtype=torch.bool, device=example_embeddings.device)
         
-        # Handle variable number of examples per batch
+        # Handle cases where some batches might have fewer examples
         for b in range(B):
             unique_examples = torch.unique(index[b, :, 0])
             actual_examples = len(unique_examples)
             if actual_examples < E_max:
                 example_mask[b, actual_examples:] = False
-                example_logits[b, actual_examples:] = 0.0
+        
+        # Apply mask to logits without in-place operation
+        example_logits = example_logits * example_mask.float()
         
         aux = {
             "example_mask": example_mask,
