@@ -14,28 +14,19 @@ class MessagePassingLayer(nn.Module):
     Graph Neural Network message passing layer with two types of edges:
     1. Solid yellow edges: intra-type connections (LF-to-LF, SCC-to-SCC)
     2. Dashed blue edges: inter-type connections (LF-to-SCC, SCC-to-LF)
+    
+    Note: No global multi-head attention to avoid memory explosion with large datasets.
     """
     
-    def __init__(self, embedding_dim: int, num_heads: int = 4):
+    def __init__(self, embedding_dim: int):
         super().__init__()
         self.embedding_dim = embedding_dim
-        self.num_heads = num_heads
-        self.head_dim = embedding_dim // num_heads
-        
-        assert embedding_dim % num_heads == 0, "embedding_dim must be divisible by num_heads"
         
         # Weight matrices for different edge types
         self.W1 = nn.Linear(embedding_dim, embedding_dim)  # Intra-type (yellow edges)
         self.W2 = nn.Linear(embedding_dim, embedding_dim)  # Inter-type LF->SCC (blue edges)
         self.W3 = nn.Linear(embedding_dim, embedding_dim)  # Inter-type SCC->LF (blue edges)
         self.W4 = nn.Linear(embedding_dim, embedding_dim)  # Self-connection
-        
-        # Multi-head attention for global context
-        self.global_attention = nn.MultiheadAttention(
-            embed_dim=embedding_dim,
-            num_heads=num_heads,
-            batch_first=True
-        )
         
         # Aggregation function (linear layer with ReLU)
         self.aggregation = nn.Sequential(
@@ -76,27 +67,7 @@ class MessagePassingLayer(nn.Module):
         # 3. Self-connection
         self_messages = self.W4(node_embeddings)  # (B, N, D)
         
-        # 4. Global context via attention (following the paper's mention of global context)
-        # Reshape for attention: (B*N, 1, D) -> (B*N, 1, D)
-        flat_embeddings = node_embeddings.view(B * N, 1, D)
-        flat_mask = node_mask.view(B * N)
-        
-        # Apply attention only to valid nodes
-        valid_indices = torch.where(flat_mask)[0]
-        if len(valid_indices) > 0:
-            valid_embeddings = flat_embeddings[valid_indices]  # (num_valid, 1, D)
-            global_context, _ = self.global_attention(
-                valid_embeddings, valid_embeddings, valid_embeddings
-            )  # (num_valid, 1, D)
-            
-            # Scatter back to original positions
-            global_messages = torch.zeros_like(flat_embeddings)
-            global_messages[valid_indices] = global_context
-            global_messages = global_messages.view(B, N, D)
-        else:
-            global_messages = torch.zeros_like(node_embeddings)
-        
-        # 5. Aggregate all messages
+        # 4. Aggregate all messages
         # Average pooling with normalization
         degree_intra = adjacency_intra.sum(dim=-1, keepdim=True).clamp(min=1)  # (B, N, 1)
         degree_inter = adjacency_inter.sum(dim=-1, keepdim=True).clamp(min=1)  # (B, N, 1)
@@ -108,8 +79,7 @@ class MessagePassingLayer(nn.Module):
         combined_messages = (
             normalized_intra + 
             normalized_inter + 
-            self_messages + 
-            global_messages / N  # Normalize global context
+            self_messages
         )
         
         # Apply aggregation function
@@ -138,7 +108,6 @@ class BagAttentionGNN(nn.Module):
         max_lf_id: int = 0, 
         embedding_dim: int = 16, 
         num_gnn_layers: int = 2,
-        num_attention_heads: int = 4,
         use_lf_reliability: bool = False
     ):
         super().__init__()
@@ -161,7 +130,7 @@ class BagAttentionGNN(nn.Module):
         
         # GNN message passing layers
         self.gnn_layers = nn.ModuleList([
-            MessagePassingLayer(embedding_dim, num_attention_heads)
+            MessagePassingLayer(embedding_dim)
             for _ in range(num_gnn_layers)
         ])
         
@@ -333,7 +302,6 @@ class StackedBagAttentionGNN(nn.Module):
         embedding_dim: int = 16, 
         num_layers: int = 2,
         num_gnn_layers: int = 2,
-        num_attention_heads: int = 4,
         use_lf_reliability: bool = False
     ):
         super().__init__()
@@ -344,7 +312,6 @@ class StackedBagAttentionGNN(nn.Module):
                 max_lf_id=max_lf_id,
                 embedding_dim=embedding_dim,
                 num_gnn_layers=num_gnn_layers,
-                num_attention_heads=num_attention_heads,
                 use_lf_reliability=use_lf_reliability
             )
             for _ in range(num_layers)
@@ -387,7 +354,6 @@ class BagAttentionGNNWrapper:
         max_lf_id: int,
         embedding_dim: int = 16,
         num_gnn_layers: int = 2,
-        num_attention_heads: int = 4,
         use_lf_reliability: bool = True,
         device: Optional[str] = None
     ):
@@ -399,7 +365,6 @@ class BagAttentionGNNWrapper:
             embedding_dim=embedding_dim,
             num_layers=2,
             num_gnn_layers=num_gnn_layers,
-            num_attention_heads=num_attention_heads,
             use_lf_reliability=use_lf_reliability
         )
         
