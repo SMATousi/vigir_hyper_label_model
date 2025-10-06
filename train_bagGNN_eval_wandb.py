@@ -16,6 +16,8 @@ import time
 from collections import defaultdict
 import argparse
 
+torch.autograd.set_detect_anomaly(True)
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LELA Transformer with evaluation')
     parser.add_argument('--num_runs', type=int, default=10, help='Number of training runs (default: 10)')
