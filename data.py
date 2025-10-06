@@ -263,5 +263,5 @@ def pred_binary_class(model, LF_mat):
     value = X_sparse.data
     index = torch.from_numpy(index).to(device)
     value = torch.from_numpy(value).float().to(device)
-    pred, _, _ = model(index.unsqueeze(0), value.unsqueeze(0))
+    pred, _ = model(index.unsqueeze(0), value.unsqueeze(0))
     return pred
