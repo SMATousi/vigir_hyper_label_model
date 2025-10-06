@@ -2,7 +2,7 @@ import torch.optim as optim
 import torch
 from torch.utils.data import DataLoader
 from data import DatasetOnlineGen
-from bag_attention_gnn import StackedBagAttentionGNN, BagAttentionGNNModelWrapper
+from bag_attention_gnn import StackedBagAttentionGNN, BagAttentionGNNModelWrapper, BagAttentionGNNWrapper
 from loss import  BCEMask
 import numpy as np
 from data import SytheticValidation, load_dataset_wrench
