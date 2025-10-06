@@ -263,5 +263,22 @@ def pred_binary_class(model, LF_mat):
     value = X_sparse.data
     index = torch.from_numpy(index).to(device)
     value = torch.from_numpy(value).float().to(device)
-    pred, _, _ = model(index.unsqueeze(0), value.unsqueeze(0))
-    return pred
+    pred, _, aux = model(index.unsqueeze(0), value.unsqueeze(0))
+    
+    # Extract valid predictions using the example mask
+    example_mask = aux["example_mask"][0]  # Remove batch dimension
+    valid_pred = pred[0, example_mask]  # Get valid predictions only
+    
+    # Expand predictions to match original example indices
+    # The sparse model gives us predictions for unique examples, but we need
+    # predictions for all original examples (including duplicates)
+    num_examples = LF_mats.shape[0]  # Original number of examples
+    expanded_pred = torch.zeros(num_examples, device=device)
+    
+    # Map sparse predictions back to original example indices
+    unique_examples = torch.unique(index[:, 0])
+    for i, example_idx in enumerate(unique_examples):
+        if i < len(valid_pred):
+            expanded_pred[example_idx] = valid_pred[i]
+    
+    return expanded_pred
