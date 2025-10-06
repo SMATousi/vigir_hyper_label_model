@@ -310,7 +310,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         
         if epoch % args.eval_frequency == 0:
             print(f"\nEvaluating at end of epoch {epoch} (evaluation frequency: {args.eval_frequency})...")
-            eval_results = evaluate_on_datasets(net, epoch, i_run)
+            eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb)
             current_overall_score = eval_results.get('overall_score', -1.0)
             
             # Check if this is the best model so far for this run
@@ -348,7 +348,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
     # Final evaluation if the last epoch wasn't evaluated
     if epoch % args.eval_frequency != 0:
         print(f"\nFinal evaluation at end of training (epoch {epoch})...")
-        final_eval_results = evaluate_on_datasets(net, epoch, i_run)
+        final_eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb)
         final_overall_score = final_eval_results.get('overall_score', -1.0)
         
         # Check if this final model is the best
