@@ -218,23 +218,33 @@ class StackedBagAttentionGNN(nn.Module):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
+        self.num_gnn_layers = num_gnn_layers
         
         # Input embedding
         self.input_embed = nn.Linear(1, embedding_dim)
         
-        # Bag attention layer
-        self.bag_attention = BagAttentionLayer(
-            in_features=embedding_dim,
-            out_features=embedding_dim,
-            lf_vocab_size=max_lf_id + 1,
-            use_lf_reliability=use_lf_reliability
-        )
+        # Create interleaved GNN and bag attention layers
+        # Architecture: GNN -> BagAttention -> GNN -> BagAttention -> ...
+        self.gnn_layers = nn.ModuleList()
+        self.bag_attention_layers = nn.ModuleList()
         
-        # Multiple sparse GNN layers
-        self.gnn_layers = nn.ModuleList([
-            SparseGNNLayer(embedding_dim, embedding_dim)
-            for _ in range(num_layers * num_gnn_layers)  # Total GNN layers across all stacks
-        ])
+        total_layers = num_layers * num_gnn_layers
+        
+        for i in range(total_layers):
+            # Add GNN layer
+            self.gnn_layers.append(
+                SparseGNNLayer(embedding_dim, embedding_dim)
+            )
+            
+            # Add bag attention layer after each GNN layer
+            self.bag_attention_layers.append(
+                BagAttentionLayer(
+                    in_features=embedding_dim,
+                    out_features=embedding_dim,
+                    lf_vocab_size=max_lf_id + 1,
+                    use_lf_reliability=use_lf_reliability
+                )
+            )
         
         # Final classification
         self.classify = nn.Sequential(
@@ -245,26 +255,30 @@ class StackedBagAttentionGNN(nn.Module):
             nn.Sigmoid()
         )
 
-        print("############## Using StackedBagAttentionGNN ##############")
+        print(f"############## Using StackedBagAttentionGNN with {total_layers} GNN-BagAttention pairs ##############")
     
     def forward(self, index: torch.Tensor, value: torch.Tensor):
         """
-        Forward pass through stacked sparse GNN layers.
+        Forward pass through interleaved GNN and bag attention layers.
+        Architecture: GNN -> BagAttention -> GNN -> BagAttention -> ...
         """
         B, S = value.shape
         
         # 1. Embed LF outputs
-        lf_embeddings = self.input_embed(value.float().unsqueeze(-1))  # (B, S, D)
+        current_embeddings = self.input_embed(value.float().unsqueeze(-1))  # (B, S, D)
         
-        # 2. Apply bag attention
-        _, refined_embeddings, bag_aux = self.bag_attention(index, lf_embeddings)
+        # 2. Apply interleaved GNN and bag attention layers
+        bag_aux_list = []  # Store auxiliary info from all bag attention layers
         
-        # 3. Apply all GNN layers sequentially
-        current_embeddings = refined_embeddings
-        for gnn_layer in self.gnn_layers:
-            _, current_embeddings = gnn_layer(index, current_embeddings)
+        for i in range(len(self.gnn_layers)):
+            # Apply GNN layer
+            _, current_embeddings = self.gnn_layers[i](index, current_embeddings)
+            
+            # Apply bag attention layer after GNN
+            _, current_embeddings, bag_aux = self.bag_attention_layers[i](index, current_embeddings)
+            bag_aux_list.append(bag_aux)
         
-        # 4. Final example-level aggregation and classification (matching original LELATransformerBag)
+        # 3. Final example-level aggregation and classification (matching original LELATransformerBag)
         example_ids = index[:, :, 0]  # (B, S)
         per_b_logits = []  # list of tensors with shape (E_b,)
         
@@ -286,7 +300,7 @@ class StackedBagAttentionGNN(nn.Module):
             batch_logits = self.classify(example_embeds).squeeze(-1)  # (E_b,)
             per_b_logits.append(batch_logits)
         
-        # 5. Pad to (B, E_max) and build example_mask (matching original behavior)
+        # 4. Pad to (B, E_max) and build example_mask (matching original behavior)
         E_max = max(v.numel() for v in per_b_logits) if per_b_logits else 0
         example_logits = current_embeddings.new_zeros((B, E_max))  # (B, E_max)
         example_mask = torch.zeros((B, E_max), dtype=torch.bool, device=current_embeddings.device)
@@ -296,9 +310,11 @@ class StackedBagAttentionGNN(nn.Module):
             example_logits[b, :L] = vec
             example_mask[b, :L] = True
         
+        # Combine auxiliary info from all bag attention layers
         aux = {
             "example_mask": example_mask,
-            "bag_aux": bag_aux
+            "bag_aux": bag_aux_list[-1] if bag_aux_list else None,  # Use last bag attention aux
+            "all_bag_aux": bag_aux_list  # Store all bag attention auxiliary info
         }
         
         return example_logits, current_embeddings, aux
