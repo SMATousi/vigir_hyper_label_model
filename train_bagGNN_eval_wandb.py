@@ -58,7 +58,7 @@ EVAL_DATASETS = [
     "chemprot",
 ]
 
-def evaluate_on_datasets(model, epoch, run_id, log_wandb):
+def evaluate_on_datasets(model, epoch, run_id, log_wandb, num_gnn_layers=2):
     """Evaluate model on all datasets with noise power = 0 and log to wandb"""
     model.eval()
     eval_results = {}
@@ -69,10 +69,11 @@ def evaluate_on_datasets(model, epoch, run_id, log_wandb):
         'model_state_dict': model.state_dict(),
     }, temp_checkpoint_path)
     
-    # Create wrapper for evaluation
+    # Create wrapper for evaluation with matching architecture
     eval_wrapper = BagAttentionGNNWrapper(
         checkpoint_path=temp_checkpoint_path, 
         max_lf_id=0, 
+        num_gnn_layers=num_gnn_layers,  # Match training model architecture
         use_lf_reliability=False
     )
     
@@ -310,7 +311,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
         
         if epoch % args.eval_frequency == 0:
             print(f"\nEvaluating at end of epoch {epoch} (evaluation frequency: {args.eval_frequency})...")
-            eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb)
+            eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb, args.num_gnn_layers)
             current_overall_score = eval_results.get('overall_score', -1.0)
             
             # Check if this is the best model so far for this run
@@ -348,7 +349,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
     # Final evaluation if the last epoch wasn't evaluated
     if epoch % args.eval_frequency != 0:
         print(f"\nFinal evaluation at end of training (epoch {epoch})...")
-        final_eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb)
+        final_eval_results = evaluate_on_datasets(net, epoch, i_run, log_wandb, args.num_gnn_layers)
         final_overall_score = final_eval_results.get('overall_score', -1.0)
         
         # Check if this final model is the best
