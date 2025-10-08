@@ -363,6 +363,7 @@ class BagAttentionGNNWrapper:
         max_lf_id: int,
         embedding_dim: int = 16,
         num_gnn_layers: int = 2,
+        num_layers: int = 2,
         use_lf_reliability: bool = True,
         device: Optional[str] = None
     ):
@@ -372,7 +373,7 @@ class BagAttentionGNNWrapper:
         self.net = StackedBagAttentionGNN(
             max_lf_id=max_lf_id,
             embedding_dim=embedding_dim,
-            num_layers=2,
+            num_layers=num_layers,
             num_gnn_layers=num_gnn_layers,
             use_lf_reliability=use_lf_reliability
         )
