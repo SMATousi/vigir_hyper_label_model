@@ -58,7 +58,7 @@ EVAL_DATASETS = [
     "chemprot",
 ]
 
-def evaluate_on_datasets(model, epoch, run_id, log_wandb, num_gnn_layers=2):
+def evaluate_on_datasets(model, epoch, run_id, log_wandb, num_gnn_layers=2, num_layers=2):
     """Evaluate model on all datasets with noise power = 0 and log to wandb"""
     model.eval()
     eval_results = {}
@@ -74,6 +74,7 @@ def evaluate_on_datasets(model, epoch, run_id, log_wandb, num_gnn_layers=2):
         checkpoint_path=temp_checkpoint_path, 
         max_lf_id=0, 
         num_gnn_layers=num_gnn_layers,  # Match training model architecture
+        num_layers=num_layers,
         use_lf_reliability=False
     )
     
@@ -183,7 +184,7 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
     device = "cuda:0"
     # Use sequence length limit to prevent memory explosion
     max_seq_len = args.max_seq_len  # Configurable via command line
-    net = StackedBagAttentionGNN(num_gnn_layers=args.num_gnn_layers)
+    net = StackedBagAttentionGNN(num_gnn_layers=args.num_gnn_layers, num_layers=args.num_layers)
 
     optimizer = optim.Adam(
         net.parameters(),
