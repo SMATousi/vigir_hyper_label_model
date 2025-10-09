@@ -5,6 +5,10 @@ import time
 import sys
 import os
 from collections import defaultdict
+import argparse
+# import wandb
+import urllib.request
+from pathlib import Path
 
 from baselines.baselines import *
 
@@ -14,11 +18,100 @@ from model import LELAWrapper
 from data import load_dataset_wrench
 from transformer_models import LELATransformerWrapper
 from bag_attention_model import LELATransformerBagWrapper
+from bag_attention_gnn import LELATransformerBagGNNWrapper
+
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Run noise robustness experiments for LELA Transformer')
+parser.add_argument('--experiment_name', type=str, default='default', 
+                    help='Name of the experiment (will be used as prefix for result files)')
+args = parser.parse_args()
+
+EXPERIMENT_NAME = args.experiment_name
+print(f"Running experiment: {EXPERIMENT_NAME}")
+
+
+# def download_checkpoint_from_wandb(wandb_artifact_url: str, save_path: str):
+#     """
+#     Download a model checkpoint from a wandb artifact URL and save it locally.
+    
+#     Args:
+#         wandb_artifact_url: The wandb artifact URL (e.g., "https://wandb.ai/username/project/artifacts/model/artifact_name/version")
+#         save_path: Local path where to save the checkpoint
+#     """
+#     print(f"Downloading checkpoint from wandb artifact: {wandb_artifact_url}")
+    
+#     # Create directory if it doesn't exist
+#     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    
+#     # Initialize wandb in offline mode to avoid login requirements
+#     wandb.init(mode="offline")
+    
+#     try:
+#         # Parse the artifact URL to get the artifact name
+#         # Expected format: https://wandb.ai/username/project/artifacts/model/artifact_name/version
+#         artifact_name = wandb_artifact_url.split('/artifacts/')[-1]
+        
+#         # Download the artifact
+#         artifact = wandb.use_artifact(artifact_name)
+#         artifact_dir = artifact.download()
+        
+#         # Find the checkpoint file in the downloaded directory
+#         checkpoint_files = list(Path(artifact_dir).glob("*.pt"))
+#         if not checkpoint_files:
+#             checkpoint_files = list(Path(artifact_dir).glob("*.pth"))
+        
+#         if checkpoint_files:
+#             # Copy the first checkpoint file to the desired location
+#             import shutil
+#             shutil.copy2(checkpoint_files[0], save_path)
+#             print(f"Checkpoint saved to: {save_path}")
+#         else:
+#             raise FileNotFoundError("No .pt or .pth files found in the downloaded artifact")
+            
+#     except Exception as e:
+#         print(f"Error downloading from wandb: {e}")
+#         print("Attempting direct download...")
+        
+#         # Fallback: try direct download if it's a direct file URL
+#         try:
+#             urllib.request.urlretrieve(wandb_artifact_url, save_path)
+#             print(f"Checkpoint downloaded directly to: {save_path}")
+#         except Exception as e2:
+#             print(f"Direct download also failed: {e2}")
+#             raise e2
+    
+#     finally:
+#         wandb.finish()
+
+
+# Wandb artifact URL for the model checkpoint
+# TODO: Replace this with your actual wandb artifact URL
+WANDB_ARTIFACT_URL = "https://wandb.ai/your-username/your-project/artifacts/model/your-artifact-name/version"
+
+# Local checkpoint path
+CHECKPOINT_PATH = "./model_checkpoints/best_model_run_3.pt"
+
+# Download checkpoint if it doesn't exist or if you want to update it
+if not os.path.exists(CHECKPOINT_PATH):
+    print(f"Checkpoint not found at {CHECKPOINT_PATH}. Downloading from wandb...")
+    download_checkpoint_from_wandb(WANDB_ARTIFACT_URL, CHECKPOINT_PATH)
+else:
+    print(f"Using existing checkpoint at {CHECKPOINT_PATH}")
+    # Uncomment the next line if you want to always download the latest version
+    # download_checkpoint_from_wandb(WANDB_ARTIFACT_URL, CHECKPOINT_PATH)
 
 lela = LELAWrapper(checkpoint_path="lela_checkpoint.pt") #load pretrained LELA model
 
-lela_transformer = LELATransformerBagWrapper(checkpoint_path="./model_checkpoints/stacked_bag_model_transformer_6.pt", 
-max_lf_id=0, use_lf_reliability=False)
+# Use LELATransformerBagGNNWrapper instead of LELATransformerBagWrapper for GNN-enhanced performance
+lela_transformer = LELATransformerBagGNNWrapper(
+    checkpoint_path=CHECKPOINT_PATH, 
+    max_lf_id=0, 
+    use_lf_reliability=False,
+    embedding_dim=16,
+    num_gnn_layers=2,
+    num_layers=1
+)
 
 # Define noise power levels from 0.00 to 0.5 with increment of 0.05
 noise_levels = np.arange(0.00, 0.55, 0.05)  # [0.00, 0.05, 0.10, 0.15, ..., 0.50]
@@ -93,8 +186,11 @@ for noise_power in noise_levels:
         for method in [lela_transformer]:
             t_s = time.time()
 
-            if isinstance(method, LELATransformerBagWrapper):
-                method_name = "LELA-Transformer-Bag"
+            if isinstance(method, (LELATransformerBagWrapper, LELATransformerBagGNNWrapper)):
+                if isinstance(method, LELATransformerBagGNNWrapper):
+                    method_name = "LELA-Transformer-Bag-GNN"
+                else:
+                    method_name = "LELA-Transformer-Bag"
                 pred_round = method.predict(X)
             else:
                 method_name = method.__name__
@@ -150,17 +246,21 @@ final_avg_results_df = final_avg_results_df[cols_acc]
 final_avg_times_df = final_avg_times_df[cols_time]
 
 print("\n" + "="*80)
-print("FINAL AVERAGE RESULTS ACROSS ALL NOISE LEVELS - LELA TRANSFORMER")
+print(f"FINAL AVERAGE RESULTS ACROSS ALL NOISE LEVELS - LELA TRANSFORMER ({EXPERIMENT_NAME})")
 print("="*80)
 print("\nAccuracy Results:")
 print(final_avg_results_df)
 print("\nTiming Results:")
 print(final_avg_times_df)
 
+# Create result filenames with experiment name prefix
+results_acc_filename = f"results/{EXPERIMENT_NAME}_avg_noise_performance_exp_transformer_acc.csv"
+results_time_filename = f"results/{EXPERIMENT_NAME}_avg_noise_performance_exp_transformer_time.csv"
+
 # Save the final average results
-final_avg_results_df.to_csv("results/avg_noise_performance_exp_transformer_acc.csv", index=False)
-final_avg_times_df.to_csv("results/avg_noise_performance_exp_transformer_time.csv", index=False)
+final_avg_results_df.to_csv(results_acc_filename, index=False)
+final_avg_times_df.to_csv(results_time_filename, index=False)
 
 print("\nResults saved to:")
-print("- results/avg_noise_performance_exp_transformer_acc.csv")
-print("- results/avg_noise_performance_exp_transformer_time.csv")
+print(f"- {results_acc_filename}")
+print(f"- {results_time_filename}")

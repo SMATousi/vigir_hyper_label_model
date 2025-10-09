@@ -9,7 +9,7 @@ sns.set_palette("husl")
 
 # Load both result files
 traditional_df = pd.read_csv("results/avg_noise_performance_exp_acc.csv")
-transformer_df = pd.read_csv("results/avg_noise_performance_exp_transformer_acc.csv")
+transformer_df = pd.read_csv("results/bag_2_1_avg_noise_performance_exp_transformer_acc.csv")
 
 # Create the figure with larger size for better visibility
 plt.figure(figsize=(14, 10))
@@ -23,7 +23,7 @@ for method in traditional_methods:
              marker='o', linewidth=1.5, markersize=4, label=method, alpha=0.7)
 
 # Plot transformer method with thicker line and larger markers to make it stand out
-transformer_method = 'LELA-Transformer-Bag'
+transformer_method = 'LELA-Transformer-Bag-GNN'
 plt.plot(transformer_df['noise_power'], transformer_df[transformer_method], 
          marker='s', linewidth=3, markersize=8, label=transformer_method, 
          color='red', alpha=0.9, linestyle='-')
@@ -78,15 +78,15 @@ plt.ylim(y_min, y_max)
 plt.tight_layout()
 
 # Save the plot
-plt.savefig('results/combined_noise_performance_plot.png', dpi=300, bbox_inches='tight')
-plt.savefig('results/combined_noise_performance_plot.pdf', bbox_inches='tight')
+plt.savefig('results/bag_2_1_combined_noise_performance_plot.png', dpi=300, bbox_inches='tight')
+plt.savefig('results/bag_2_1_combined_noise_performance_plot.pdf', bbox_inches='tight')
 
 # Show the plot
 plt.show()
 
 print("Combined plot saved as:")
-print("- results/combined_noise_performance_plot.png")
-print("- results/combined_noise_performance_plot.pdf")
+print("- results/bag_2_1_combined_noise_performance_plot.png")
+print("- results/bag_2_1_combined_noise_performance_plot.pdf")
 
 # Print comprehensive statistics
 print("\nPerformance Summary - All Methods:")

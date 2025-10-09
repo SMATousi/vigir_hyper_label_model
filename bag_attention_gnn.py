@@ -447,3 +447,7 @@ class BagAttentionGNNWrapper:
         pred_vec = preds_padded[0, mask].detach().cpu().numpy()
         
         return pred_vec
+
+
+# Alias for compatibility with transformer experiments
+LELATransformerBagGNNWrapper = BagAttentionGNNWrapper
