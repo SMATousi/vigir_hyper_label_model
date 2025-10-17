@@ -84,12 +84,13 @@ def evaluate_on_datasets(model, epoch, run_id, log_wandb, num_gnn_layers=2, num_
             X, y = load_dataset_wrench(f"datasets/{dataset_name}")
             
             # No noise applied (NOISE_POWER = 0)
-            # Remove cols and rows with all abstentions
-            non_zero_cols = np.sum(X >= 0, axis=0) != 0
-            X = X[:, non_zero_cols]
-            non_zero = np.sum(X >= 0, axis=1) != 0
-            X = X[non_zero, :]
-            y = y[non_zero]
+            # Remove cols and rows with all abstentions (-1)
+            # Note: -1 is abstention, 0 is negative class, 1 is positive class
+            non_abstain_cols = np.sum(X != -1, axis=0) > 0
+            X = X[:, non_abstain_cols]
+            non_abstain_rows = np.sum(X != -1, axis=1) > 0
+            X = X[non_abstain_rows, :]
+            y = y[non_abstain_rows]
             
             if X.shape[0] == 0:  # Skip if no valid data
                 continue

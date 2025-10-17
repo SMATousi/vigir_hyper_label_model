@@ -16,6 +16,7 @@ def load_dataset_wrench(path):
     import json
     dicts = []
     for name in ["train.json", "valid.json", "test.json"]: #some datasets miss one file
+    # for name in ["test.json"]: #some datasets miss one file
         try:
             dict = json.load(open(join(path, name)))
             dicts.append(dict)
