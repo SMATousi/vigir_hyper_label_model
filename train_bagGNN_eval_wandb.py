@@ -1,5 +1,6 @@
 import torch.optim as optim
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from data import DatasetOnlineGen
 from bag_attention_gnn import StackedBagAttentionGNN, BagAttentionGNNModelWrapper, BagAttentionGNNWrapper
@@ -18,6 +19,117 @@ import argparse
 
 torch.autograd.set_detect_anomaly(True)
 
+# Regularization functions
+def attention_entropy_loss(attention_weights, valid_mask=None):
+    """
+    Compute entropy penalty to encourage peaked attention.
+    Lower entropy = more peaked attention.
+    
+    Args:
+        attention_weights: (num_segs, maxL) attention weights after softmax
+        valid_mask: (num_segs, maxL) mask for valid positions
+    
+    Returns:
+        entropy: scalar entropy loss (negative for peaked attention)
+    """
+    if valid_mask is not None:
+        # Only compute entropy over valid positions
+        attention_weights = attention_weights * valid_mask
+        # Renormalize
+        attention_weights = attention_weights / (attention_weights.sum(dim=-1, keepdim=True) + 1e-8)
+    
+    # Compute entropy: H(p) = -sum(p * log(p))
+    log_attn = torch.log(attention_weights + 1e-8)
+    entropy = -(attention_weights * log_attn).sum(dim=-1)  # (num_segs,)
+    return entropy.mean()  # Average over all segments
+
+def attention_l1_sparsity_loss(attention_weights, valid_mask=None):
+    """
+    Compute L1 sparsity penalty on attention weights.
+    
+    Args:
+        attention_weights: (num_segs, maxL) attention weights after softmax
+        valid_mask: (num_segs, maxL) mask for valid positions
+    
+    Returns:
+        l1_loss: scalar L1 sparsity loss
+    """
+    if valid_mask is not None:
+        attention_weights = attention_weights * valid_mask
+    
+    return attention_weights.abs().sum() / (valid_mask.sum() if valid_mask is not None else attention_weights.numel())
+
+def labeler_dropout(value, dropout_rate=0.2, training=True):
+    """
+    Apply labeler dropout - randomly set entire labeler channels to abstain (-1).
+    
+    Args:
+        value: (B, S) input values
+        dropout_rate: probability of dropping each labeler
+        training: whether in training mode
+    
+    Returns:
+        value_dropped: (B, S) values with some labelers dropped
+    """
+    if not training or dropout_rate == 0.0:
+        return value
+    
+    # Create dropout mask - same for all examples in batch
+    B, S = value.shape
+    dropout_mask = torch.rand(S, device=value.device) > dropout_rate  # (S,)
+    dropout_mask = dropout_mask.unsqueeze(0).expand(B, -1)  # (B, S)
+    
+    # Apply dropout by setting dropped positions to -1 (abstain)
+    value_dropped = value.clone()
+    value_dropped[~dropout_mask] = -1
+    
+    return value_dropped
+
+class SymmetricCrossEntropyLoss(nn.Module):
+    """
+    Symmetric Cross-Entropy Loss for robust training with noisy labels.
+    SCE = alpha * CE + beta * RCE
+    where RCE is Reverse Cross-Entropy: -sum(y_pred * log(y_true))
+    """
+    def __init__(self, alpha=0.1, beta=1.0):
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        
+    def forward(self, outputs, targets, mask):
+        """
+        Args:
+            outputs: (B, E_max) predicted probabilities
+            targets: (B, E_max) target labels (0 or 1)
+            mask: (B, E_max) valid position mask
+        
+        Returns:
+            loss: scalar SCE loss
+        """
+        # Apply mask
+        outputs_masked = outputs[mask]
+        targets_masked = targets[mask]
+        
+        if outputs_masked.numel() == 0:
+            return torch.tensor(0.0, device=outputs.device, requires_grad=True)
+        
+        # Clamp to avoid log(0)
+        outputs_clamped = torch.clamp(outputs_masked, 1e-7, 1.0 - 1e-7)
+        targets_clamped = torch.clamp(targets_masked, 1e-7, 1.0 - 1e-7)
+        
+        # Standard Cross-Entropy: -sum(y_true * log(y_pred))
+        ce_loss = -(targets_clamped * torch.log(outputs_clamped) + 
+                   (1 - targets_clamped) * torch.log(1 - outputs_clamped))
+        
+        # Reverse Cross-Entropy: -sum(y_pred * log(y_true))
+        rce_loss = -(outputs_clamped * torch.log(targets_clamped) + 
+                    (1 - outputs_clamped) * torch.log(1 - targets_clamped))
+        
+        # Symmetric combination
+        sce_loss = self.alpha * ce_loss + self.beta * rce_loss
+        
+        return sce_loss.mean()
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LELA Transformer with evaluation')
     parser.add_argument('--num_runs', type=int, default=10, help='Number of training runs (default: 10)')
@@ -33,6 +145,15 @@ def parse_args():
     parser.add_argument('--project_name', type=str, default='lela-transformer-training', help='Wandb project name')
     parser.add_argument('--log-wandb', type=bool, default=False, help='Log to wandb (default: False)')
     parser.add_argument('--num_gnn_layers', type=int, default=2, help='Number of GNN layers (default: 2)')
+    
+    # Regularization hyperparameters
+    parser.add_argument('--lambda_entropy', type=float, default=0.01, help='Attention entropy regularization weight (default: 0.01)')
+    parser.add_argument('--lambda_l1', type=float, default=0.001, help='L1 sparsity on attention weights (default: 0.001)')
+    parser.add_argument('--labeler_dropout_rate', type=float, default=0.2, help='Labeler dropout rate (default: 0.2)')
+    parser.add_argument('--alpha_sce', type=float, default=0.1, help='Alpha parameter for Symmetric Cross-Entropy (default: 0.1)')
+    parser.add_argument('--beta_sce', type=float, default=1.0, help='Beta parameter for Symmetric Cross-Entropy (default: 1.0)')
+    parser.add_argument('--use_sce_loss', action='store_true', help='Use Symmetric Cross-Entropy loss instead of BCE')
+    
     return parser.parse_args()
 
 args = parse_args()
@@ -165,17 +286,25 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
             name=f"run_{i_run}",
             config={
                 "run_id": i_run,
-            "num_epochs": args.num_epochs,
-            "data_size": args.data_size,
-            "max_n_lfs": args.max_n_lfs,
-            "max_examples": args.max_examples,
-            "batch_size": args.batch_size,
-            "num_workers": args.num_workers,
-            "num_layers": args.num_layers,
-            "max_seq_len": args.max_seq_len,
-            "eval_frequency": args.eval_frequency
-        }
-    )
+                "num_epochs": args.num_epochs,
+                "data_size": args.data_size,
+                "max_n_lfs": args.max_n_lfs,
+                "max_examples": args.max_examples,
+                "batch_size": args.batch_size,
+                "num_workers": args.num_workers,
+                "num_layers": args.num_layers,
+                "max_seq_len": args.max_seq_len,
+                "eval_frequency": args.eval_frequency,
+                "num_gnn_layers": args.num_gnn_layers,
+                # Regularization hyperparameters
+                "lambda_entropy": args.lambda_entropy,
+                "lambda_l1": args.lambda_l1,
+                "labeler_dropout_rate": args.labeler_dropout_rate,
+                "alpha_sce": args.alpha_sce,
+                "beta_sce": args.beta_sce,
+                "use_sce_loss": args.use_sce_loss
+            }
+        )
     
     # Track best model for this run
     best_overall_score = -1.0
@@ -193,7 +322,13 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
     )
     net.to(device)
 
-    criterion = BCEMask()
+    # Initialize loss function based on arguments
+    if args.use_sce_loss:
+        criterion = SymmetricCrossEntropyLoss(alpha=args.alpha_sce, beta=args.beta_sce)
+        print(f"Using Symmetric Cross-Entropy Loss with alpha={args.alpha_sce}, beta={args.beta_sce}")
+    else:
+        criterion = BCEMask()
+        print("Using standard BCE Loss")
 
     dataset = DatasetOnlineGen(
         size=args.data_size, # Configurable dataset size
@@ -248,6 +383,10 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                 index, value, labels = index.squeeze().to(
                     device), value.squeeze().to(device), labels.squeeze().to(device)
 
+                # Apply labeler dropout during training
+                if net.training:
+                    value = labeler_dropout(value, dropout_rate=args.labeler_dropout_rate, training=True)
+
                 outputs, _, aux = net(index, value)     # outputs: (B, E_max)
                 # print("outputs.shape", outputs.shape)
                 B, E_max = outputs.shape
@@ -259,7 +398,47 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                 # print(outputs.shape, (labels != -1).shape, aux["example_mask"].shape)
                 mask = aux["example_mask"] & (labels != -1)
                 # print("mask.shape", mask.shape)
-                loss = criterion(outputs, labels.float(), mask)
+                
+                # Compute main loss
+                main_loss = criterion(outputs, labels.float(), mask)
+                
+                # Compute regularization losses
+                reg_loss = 0.0
+                
+                # Attention regularization (from all bag attention layers)
+                if "all_bag_aux" in aux and aux["all_bag_aux"]:
+                    total_entropy_loss = 0.0
+                    total_l1_loss = 0.0
+                    num_layers = 0
+                    
+                    for bag_aux in aux["all_bag_aux"]:
+                        if bag_aux and "attention_weights" in bag_aux and "valid_masks" in bag_aux:
+                            attention_weights = bag_aux["attention_weights"]
+                            valid_masks = bag_aux["valid_masks"]
+                            
+                            # Compute regularization for each batch in this layer
+                            for attn_weights, valid_mask in zip(attention_weights, valid_masks):
+                                if attn_weights.numel() > 0:
+                                    # Entropy regularization (encourage peaked attention)
+                                    entropy_loss = attention_entropy_loss(attn_weights, valid_mask)
+                                    total_entropy_loss += entropy_loss
+                                    
+                                    # L1 sparsity regularization
+                                    l1_loss = attention_l1_sparsity_loss(attn_weights, valid_mask)
+                                    total_l1_loss += l1_loss
+                                    
+                                    num_layers += 1
+                    
+                    if num_layers > 0:
+                        # Average over all layers and add to regularization
+                        avg_entropy_loss = total_entropy_loss / num_layers
+                        avg_l1_loss = total_l1_loss / num_layers
+                        
+                        reg_loss += args.lambda_entropy * avg_entropy_loss
+                        reg_loss += args.lambda_l1 * avg_l1_loss
+                
+                # Total loss
+                loss = main_loss + reg_loss
                 # print("loss.shape", loss.shape)
                 loss.backward()
                 
@@ -270,6 +449,10 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                 optimizer.zero_grad()
 
                 l_value = loss.item()
+                main_loss_value = main_loss.item() if 'main_loss' in locals() else l_value
+                reg_loss_value = reg_loss.item() if isinstance(reg_loss, torch.Tensor) else 0.0
+                entropy_loss_value = avg_entropy_loss.item() if 'avg_entropy_loss' in locals() else 0.0
+                l1_loss_value = avg_l1_loss.item() if 'avg_l1_loss' in locals() else 0.0
 
                 n_iter += 1
 
@@ -290,11 +473,17 @@ for i_run in range(NUM_RUNS): #train LELA model with configurable parameters
                     
                     if LOG_WANDB:
                         # Log to wandb
-                        wandb.log({
+                        log_dict = {
                             "train/loss": l_avg,
+                            "train/main_loss": main_loss_value,
+                            "train/reg_loss": reg_loss_value,
+                            "train/entropy_loss": entropy_loss_value,
+                            "train/l1_loss": l1_loss_value,
                             "train/synthetic_val_acc": test_score_sythetic_ind,
                             "train/iteration": n_iter
-                        })
+                        }
+                        
+                        wandb.log(log_dict)
                     if l_avg< min_loss:
                         min_loss = l_avg
                         n_not_improved = 0

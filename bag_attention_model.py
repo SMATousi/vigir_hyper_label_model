@@ -85,6 +85,8 @@ class BagAttentionLayer(nn.Module):
 
         out_tokens = torch.empty_like(x)                # (B,S,C)
         bag_embeds = []                                 # collect per-bag embeddings for debug/usage
+        attention_weights_list = []                     # collect attention weights for regularization
+        valid_masks_list = []                           # collect valid masks for attention weights
 
         # Process each batch independently (S usually large; B typically small)
         for b in range(B):
@@ -135,6 +137,11 @@ class BagAttentionLayer(nn.Module):
             logits = logits.masked_fill(~valid, float("-inf"))
 
             attn = torch.softmax(logits, dim=-1)               # (num_segs, maxL)
+            
+            # Store attention weights and valid mask for regularization
+            attention_weights_list.append(attn)  # (num_segs, maxL)
+            valid_masks_list.append(valid)       # (num_segs, maxL)
+            
             attn = attn.unsqueeze(-1)                          # (num_segs, maxL, 1)
 
             # bag embedding per segment: weighted sum of V
@@ -153,7 +160,11 @@ class BagAttentionLayer(nn.Module):
             out_tokens[b, :, :] = out_perm[invperm, :]
 
         out = self.output_projection(out_tokens)               # (B,S,Cin)
-        aux = {"bag_embeds": torch.cat(bag_embeds, dim=0) if bag_embeds else None}
+        aux = {
+            "bag_embeds": torch.cat(bag_embeds, dim=0) if bag_embeds else None,
+            "attention_weights": attention_weights_list,  # List of (num_segs, maxL) tensors
+            "valid_masks": valid_masks_list               # List of (num_segs, maxL) tensors
+        }
         return index, out, aux
 
 
