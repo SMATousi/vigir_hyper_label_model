@@ -4,7 +4,7 @@ Just provide your labeling function results (X) and ground truth (y).
 """
 
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 import numpy as np
 import time
 import sys
@@ -16,10 +16,32 @@ from baselines.baselines import *
 from model import LELAWrapper
 
 
+def calculate_npv(y_true, y_pred):
+    """
+    Calculate Negative Predictive Value (NPV).
+    NPV = TN / (TN + FN)
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    # For binary classification
+    if cm.shape == (2, 2):
+        tn = cm[0, 0]
+        fn = cm[1, 0]
+        npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+        return npv
+    else:
+        # For multiclass, calculate NPV for each class and average
+        npvs = []
+        for i in range(cm.shape[0]):
+            tn = np.sum(cm) - (np.sum(cm[i, :]) + np.sum(cm[:, i]) - cm[i, i])
+            fn = np.sum(cm[i, :]) - cm[i, i]
+            npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+            npvs.append(npv)
+        return np.mean(npvs)
+
+
 def run_methods_and_get_results(
     X: np.ndarray,
     y: np.ndarray,
-    use_f1: bool = False,
     use_lela: bool = True,
     lela_checkpoint: str = "./lela_checkpoint.pt"
 ):
@@ -36,9 +58,6 @@ def run_methods_and_get_results(
         Ground truth labels of shape (n_samples,)
         Values: 0, 1, 2, ... (class labels)
         
-    use_f1 : bool, default=False
-        If True, use F1 score; otherwise use accuracy
-        
     use_lela : bool, default=True
         Whether to include LELA method
         
@@ -48,7 +67,7 @@ def run_methods_and_get_results(
     Returns:
     --------
     results_df : pd.DataFrame
-        DataFrame with methods as columns and metrics as rows
+        DataFrame with methods as rows and metrics (Accuracy, F1, Precision, Recall, NPV) as columns
     """
     
     print("="*80)
@@ -58,9 +77,10 @@ def run_methods_and_get_results(
     print(f"Ground truth shape: {y.shape}")
     print(f"Number of labeling functions: {X.shape[1]}")
     print(f"Number of samples: {X.shape[0]}")
-    print(f"Number of classes: {len(np.unique(y[y >= 0]))}")
+    num_classes = len(np.unique(y[y >= 0]))
+    print(f"Number of classes: {num_classes}")
     print(f"Abstention rate: {np.mean(X == -1):.2%}")
-    print(f"Metric: {'F1 Score' if use_f1 else 'Accuracy'}")
+    print(f"Metrics: Accuracy, F1, Precision, Recall, NPV")
     
     # Remove columns (LFs) with all abstentions
     non_abstain_cols = np.sum(X != -1, axis=0) > 0
@@ -98,8 +118,18 @@ def run_methods_and_get_results(
         methods.insert(2, lela)  # Insert LELA after majority_vote
     
     # Run methods
-    results = {}
-    times = {}
+    results = {
+        'Method': [],
+        'Accuracy': [],
+        'F1': [],
+        'Precision': [],
+        'Recall': [],
+        'NPV': [],
+        'Time (s)': []
+    }
+    
+    # Determine if binary or multiclass
+    is_binary = num_classes == 2
     
     print("\n" + "="*80)
     print("Running Methods...")
@@ -132,31 +162,43 @@ def run_methods_and_get_results(
             gt_labels_valid = gt_labels[gt_labels >= 0]
             pred_labels_valid = pred_labels[valid_indices]
             
-            # Calculate metric
-            if use_f1:
-                score = f1_score(gt_labels_valid, pred_labels_valid, average='binary' if len(np.unique(gt_labels_valid)) == 2 else 'macro')
-            else:
-                score = accuracy_score(gt_labels_valid, pred_labels_valid)
+            # Calculate all metrics
+            acc = accuracy_score(gt_labels_valid, pred_labels_valid)
             
-            results[method_name] = score
-            times[method_name] = t_elapsed
+            # For F1, Precision, Recall: use 'binary' for binary classification, 'macro' for multiclass
+            avg_type = 'binary' if is_binary else 'macro'
+            f1 = f1_score(gt_labels_valid, pred_labels_valid, average=avg_type, zero_division=0)
+            prec = precision_score(gt_labels_valid, pred_labels_valid, average=avg_type, zero_division=0)
+            rec = recall_score(gt_labels_valid, pred_labels_valid, average=avg_type, zero_division=0)
+            npv = calculate_npv(gt_labels_valid, pred_labels_valid)
             
-            print(f"✓ Score: {score:.4f}, Time: {t_elapsed:.3f}s")
+            # Store results
+            results['Method'].append(method_name)
+            results['Accuracy'].append(acc)
+            results['F1'].append(f1)
+            results['Precision'].append(prec)
+            results['Recall'].append(rec)
+            results['NPV'].append(npv)
+            results['Time (s)'].append(t_elapsed)
+            
+            print(f"✓ Acc: {acc:.4f}, F1: {f1:.4f}, Prec: {prec:.4f}, Rec: {rec:.4f}, NPV: {npv:.4f}, Time: {t_elapsed:.3f}s")
             
         except Exception as e:
             print(f"✗ Error: {e}")
-            results[method_name] = np.nan
-            times[method_name] = np.nan
+            method_name = method.__name__ if hasattr(method, '__name__') else 'Unknown'
+            results['Method'].append(method_name)
+            results['Accuracy'].append(np.nan)
+            results['F1'].append(np.nan)
+            results['Precision'].append(np.nan)
+            results['Recall'].append(np.nan)
+            results['NPV'].append(np.nan)
+            results['Time (s)'].append(np.nan)
     
     # Create results DataFrame
-    results_df = pd.DataFrame({
-        'Method': list(results.keys()),
-        'Score': list(results.values()),
-        'Time (s)': list(times.values())
-    })
+    results_df = pd.DataFrame(results)
     
-    # Sort by score (descending)
-    results_df = results_df.sort_values('Score', ascending=False).reset_index(drop=True)
+    # Sort by F1 score (descending)
+    results_df = results_df.sort_values('F1', ascending=False).reset_index(drop=True)
     
     # Print results table
     print("\n" + "="*80)
@@ -208,7 +250,6 @@ if __name__ == "__main__":
     results_df = run_methods_and_get_results(
         X=X,
         y=y,
-        use_f1=False,  # Set to True if you want F1 score instead of accuracy
         use_lela=True,  # Set to False to skip LELA
         lela_checkpoint="../lela_checkpoint.pt"
     )
