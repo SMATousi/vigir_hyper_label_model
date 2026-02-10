@@ -194,12 +194,12 @@ if __name__ == "__main__":
     # y = your_ground_truth
     
     # For demonstration, using synthetic data:
-    print("NOTE: Using synthetic data for demonstration.")
-    print("Replace this with your actual data loading code.\n")
+    # print("NOTE: Using synthetic data for demonstration.")
+    # print("Replace this with your actual data loading code.\n")
     
-    np.random.seed(42)
-    X = np.random.choice([-1, 0, 1], size=(1000, 10), p=[0.2, 0.4, 0.4])
-    y = np.random.choice([0, 1], size=1000)
+    # np.random.seed(42)
+    # X = np.random.choice([-1, 0, 1], size=(1000, 10), p=[0.2, 0.4, 0.4])
+    # y = np.random.choice([0, 1], size=1000)
     
     # -------------------------------------------------------------------------
     # STEP 2: Run methods and get results
