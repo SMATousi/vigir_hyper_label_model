@@ -210,7 +210,7 @@ if __name__ == "__main__":
         y=y,
         use_f1=False,  # Set to True if you want F1 score instead of accuracy
         use_lela=True,  # Set to False to skip LELA
-        lela_checkpoint="./lela_checkpoint.pt"
+        lela_checkpoint="../lela_checkpoint.pt"
     )
     
     # -------------------------------------------------------------------------
