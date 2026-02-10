@@ -1,5 +1,5 @@
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 import numpy as np
 import time
 import sys
@@ -13,6 +13,29 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model import LELAWrapper
 from data import load_dataset_wrench
+
+
+def calculate_npv(y_true, y_pred):
+    """
+    Calculate Negative Predictive Value (NPV).
+    NPV = TN / (TN + FN)
+    """
+    cm = confusion_matrix(y_true, y_pred)
+    # For binary classification
+    if cm.shape == (2, 2):
+        tn = cm[0, 0]
+        fn = cm[1, 0]
+        npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+        return npv
+    else:
+        # For multiclass, calculate NPV for each class and average
+        npvs = []
+        for i in range(cm.shape[0]):
+            tn = np.sum(cm) - (np.sum(cm[i, :]) + np.sum(cm[:, i]) - cm[i, i])
+            fn = np.sum(cm[i, :]) - cm[i, i]
+            npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0
+            npvs.append(npv)
+        return np.mean(npvs)
 
 
 def run_label_aggregation_methods(
@@ -36,7 +59,8 @@ def run_label_aggregation_methods(
         methods_to_run: List of methods to run. If None, runs all methods.
     
     Returns:
-        results: Dictionary mapping method names to accuracy/F1 scores
+        results: Dictionary mapping method names to dictionaries of metrics
+                 (Accuracy, F1, Precision, Recall, NPV)
         times: Dictionary mapping method names to running times
     """
     # Initialize LELA if checkpoint provided
@@ -65,6 +89,9 @@ def run_label_aggregation_methods(
     print(f"\nDataset: {dataset_name}")
     print(f"Shape after filtering: {X_filtered.shape}")
     print(f"Number of samples with ground truth: {np.sum(y_filtered >= 0)}")
+    
+    num_classes = len(np.unique(y_filtered[y_filtered >= 0]))
+    is_binary = num_classes == 2
     
     results = {}
     times = {}
@@ -95,16 +122,27 @@ def run_label_aggregation_methods(
                 print(f"{method_name}: No ground truth labels available")
                 continue
             
-            # Calculate metric
-            if use_f1:
-                score = f1_score(gt_labels_eval, pred_round_eval)
-            else:
-                score = accuracy_score(gt_labels_eval, pred_round_eval)
+            # Calculate all metrics
+            acc = accuracy_score(gt_labels_eval, pred_round_eval)
             
-            results[method_name] = score
+            # For F1, Precision, Recall: use 'binary' for binary, 'macro' for multiclass
+            avg_type = 'binary' if is_binary else 'macro'
+            f1 = f1_score(gt_labels_eval, pred_round_eval, average=avg_type, zero_division=0)
+            prec = precision_score(gt_labels_eval, pred_round_eval, average=avg_type, zero_division=0)
+            rec = recall_score(gt_labels_eval, pred_round_eval, average=avg_type, zero_division=0)
+            npv = calculate_npv(gt_labels_eval, pred_round_eval)
+            
+            # Store all metrics
+            results[method_name] = {
+                'Accuracy': acc,
+                'F1': f1,
+                'Precision': prec,
+                'Recall': rec,
+                'NPV': npv
+            }
             times[method_name] = delta_t
             
-            print(f"{method_name}: {score:.4f} (time: {delta_t:.3f}s)")
+            print(f"{method_name}: Acc={acc:.4f}, F1={f1:.4f}, Prec={prec:.4f}, Rec={rec:.4f}, NPV={npv:.4f} (time: {delta_t:.3f}s)")
         
         except Exception as e:
             print(f"{method_name if 'method_name' in locals() else 'Unknown'}: Error - {e}")
@@ -112,23 +150,34 @@ def run_label_aggregation_methods(
     return results, times
 
 
-def print_results_table(results_dict: Dict[str, Dict[str, float]], 
+def print_results_table(results_dict: Dict[str, Dict[str, Dict[str, float]]], 
                        times_dict: Optional[Dict[str, Dict[str, float]]] = None):
     """
     Print results in a formatted table.
     
     Args:
         results_dict: Dictionary mapping dataset names to method results
+                     (which are dicts of metrics)
         times_dict: Optional dictionary mapping dataset names to method times
     """
-    df = pd.DataFrame.from_dict(results_dict, orient='index')
+    # Flatten the nested dictionary structure for display
+    # Convert {dataset: {method: {metric: value}}} to separate tables per metric
     
-    print("\n" + "="*80)
-    print("RESULTS TABLE (Accuracy/F1 Score)")
-    print("="*80)
-    print(df.to_string())
-    print("\nMean Performance:")
-    print(df.mean().to_string())
+    metrics = ['Accuracy', 'F1', 'Precision', 'Recall', 'NPV']
+    
+    for metric in metrics:
+        metric_data = {}
+        for dataset, methods in results_dict.items():
+            metric_data[dataset] = {method: vals[metric] for method, vals in methods.items()}
+        
+        df = pd.DataFrame.from_dict(metric_data, orient='index')
+        
+        print("\n" + "="*80)
+        print(f"{metric.upper()} SCORES")
+        print("="*80)
+        print(df.to_string())
+        print(f"\nMean {metric}:")
+        print(df.mean().to_string())
     
     if times_dict is not None:
         time_df = pd.DataFrame.from_dict(times_dict, orient='index')
@@ -139,7 +188,12 @@ def print_results_table(results_dict: Dict[str, Dict[str, float]],
         print("\nMean Time:")
         print(time_df.mean().to_string())
     
-    return df
+    # Return the first metric's dataframe for compatibility
+    return pd.DataFrame.from_dict(
+        {dataset: {method: vals['F1'] for method, vals in methods.items()} 
+         for dataset, methods in results_dict.items()}, 
+        orient='index'
+    )
 
 
 # =============================================================================
